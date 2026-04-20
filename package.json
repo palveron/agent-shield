@@ -1,0 +1,43 @@
+{
+  "name": "@anthropic-placeholder/agent-shield",
+  "version": "0.1.0",
+  "description": "Control Layer for OpenClaw Agents — See. Control. Prove.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PLACEHOLDER_ORG/agent-shield"
+  },
+  "homepage": "https://PLACEHOLDER_DOMAIN",
+  "keywords": [
+    "openclaw",
+    "agent",
+    "governance",
+    "security",
+    "shield",
+    "ai",
+    "mcp"
+  ],
+  "bin": {
+    "agent-shield": "./bin/agent-shield.mjs",
+    "agent-shield-mcp": "./bin/agent-shield-mcp.mjs"
+  },
+  "main": "./src/index.mjs",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./client": "./src/client.mjs",
+    "./mcp": "./src/mcp-server.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
