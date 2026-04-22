@@ -16,10 +16,10 @@ import { hostname } from 'os';
 
 function resolveConfig() {
   const apiUrl =
-    process.env.VEXIS_API_URL ||
+    process.env.PALVERON_API_URL ||
     process.env.AGENT_SHIELD_API_URL;
   const apiKey =
-    process.env.VEXIS_API_KEY ||
+    process.env.PALVERON_API_KEY ||
     process.env.AGENT_SHIELD_API_KEY;
   const llmApiKey =
     process.env.OPENAI_API_KEY ||
@@ -31,12 +31,12 @@ function resolveConfig() {
 
 function createClient(config) {
   if (!config.apiUrl) {
-    error('Missing VEXIS_API_URL (or AGENT_SHIELD_API_URL) environment variable');
+    error('Missing PALVERON_API_URL (or AGENT_SHIELD_API_URL) environment variable');
     hint('Get your API URL from your dashboard settings');
     process.exit(1);
   }
   if (!config.apiKey) {
-    error('Missing VEXIS_API_KEY (or AGENT_SHIELD_API_KEY) environment variable');
+    error('Missing PALVERON_API_KEY (or AGENT_SHIELD_API_KEY) environment variable');
     hint('Get your API key from your dashboard → Settings → API Keys');
     process.exit(1);
   }
@@ -65,7 +65,7 @@ async function cmdInit() {
   } catch (err) {
     fail('Cannot reach governance API');
     error(err.message);
-    hint('Check VEXIS_API_URL and ensure the server is running');
+    hint('Check PALVERON_API_URL and ensure the server is running');
     process.exit(1);
   }
 
@@ -98,8 +98,8 @@ async function cmdInit() {
     log(`    "command": "npx",`);
     log(`    "args": ["-y", "agent-shield-mcp"],`);
     log(`    "env": {`);
-    log(`      "VEXIS_API_URL": "${config.apiUrl || 'YOUR_API_URL'}",`);
-    log(`      "VEXIS_API_KEY": "${maskKey(config.apiKey)}"`);
+    log(`      "PALVERON_API_URL": "${config.apiUrl || 'YOUR_API_URL'}",`);
+    log(`      "PALVERON_API_KEY": "${maskKey(config.apiKey)}"`);
     log(`    }`);
     log(`  }`);
   }
@@ -239,11 +239,11 @@ function cmdHelp() {
   log('  npx agent-shield help     Show this help');
   log('');
   log('Environment Variables:');
-  log('  VEXIS_API_URL      Governance API URL');
-  log('  VEXIS_API_KEY      Your project API key');
+  log('  PALVERON_API_URL      Governance API URL');
+  log('  PALVERON_API_KEY      Your project API key');
   log('  OPENAI_API_KEY     Your LLM key (for BYOM 2-pass analysis)');
   log('');
-  log('See: https://PLACEHOLDER_DOMAIN/docs/openclaw');
+  log('See: https://palveron.com/docs/openclaw');
   log('');
 }
 
@@ -271,8 +271,8 @@ async function updateOpenClawConfig(config) {
         command: 'npx',
         args: ['-y', 'agent-shield-mcp'],
         env: {
-          VEXIS_API_URL: config.apiUrl || '',
-          VEXIS_API_KEY: config.apiKey || '',
+          PALVERON_API_URL: config.apiUrl || '',
+          PALVERON_API_KEY: config.apiKey || '',
         },
       };
 

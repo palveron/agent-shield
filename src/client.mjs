@@ -17,8 +17,8 @@ export class ShieldClient {
 
   /**
    * @param {object} options
-   * @param {string} options.apiUrl    - Base URL of the governance API (e.g. https://api.PLACEHOLDER_DOMAIN)
-   * @param {string} options.apiKey    - Project API key (vx_live_xxx or vx_test_xxx)
+   * @param {string} options.apiUrl    - Base URL of the governance API (e.g. https://api.palveron.com)
+   * @param {string} options.apiKey    - Project API key (pv_live_xxx or pv_test_xxx)
    * @param {string} [options.llmApiKey] - User's LLM API key for BYOM 2-pass analysis
    * @param {number} [options.timeout]   - Request timeout in ms (default: 5000)
    */

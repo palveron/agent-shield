@@ -69,8 +69,8 @@ If decision has _fallback == true:
 npm install -g @PLACEHOLDER_SCOPE/agent-shield
 
 # Set environment variables
-export VEXIS_API_KEY="your-api-key"     # From dashboard
-export VEXIS_API_URL="your-api-url"     # API endpoint
+export PALVERON_API_KEY="your-api-key"     # From dashboard
+export PALVERON_API_URL="your-api-url"     # API endpoint
 export OPENAI_API_KEY="sk-..."          # Your LLM key (BYOM)
 
 # Initialize

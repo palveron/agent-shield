@@ -13,8 +13,8 @@ agent-shield shows you everything your OpenClaw agent does, blocks dangerous act
 npm install -g @PLACEHOLDER_SCOPE/agent-shield
 
 # 2. Set your keys
-export VEXIS_API_KEY="your-key"        # from dashboard signup
-export VEXIS_API_URL="your-api-url"    # API endpoint
+export PALVERON_API_KEY="your-key"        # from dashboard signup
+export PALVERON_API_URL="your-api-url"    # API endpoint
 export OPENAI_API_KEY="sk-..."         # your own LLM key (BYOM)
 
 # 3. Initialize
@@ -86,8 +86,8 @@ npx agent-shield help       # Usage information
 import { ShieldClient } from '@PLACEHOLDER_SCOPE/agent-shield';
 
 const client = new ShieldClient({
-  apiUrl: process.env.VEXIS_API_URL,
-  apiKey: process.env.VEXIS_API_KEY,
+  apiUrl: process.env.PALVERON_API_URL,
+  apiKey: process.env.PALVERON_API_KEY,
   llmApiKey: process.env.OPENAI_API_KEY,
 });
 
@@ -121,9 +121,9 @@ Automatically covered: Art. 5 (Prohibited Practices), Art. 9 (Risk Management), 
 
 ## Links
 
-- [Dashboard](https://PLACEHOLDER_DOMAIN)
-- [Documentation](https://PLACEHOLDER_DOMAIN/docs/openclaw)
-- [API Reference](https://PLACEHOLDER_DOMAIN/docs/api)
+- [Dashboard](https://palveron.com)
+- [Documentation](https://palveron.com/docs/openclaw)
+- [API Reference](https://palveron.com/docs/api)
 
 ## License
 

@@ -19,8 +19,8 @@ const PROTOCOL_VERSION = '2024-11-05';
  * Called by bin/agent-shield-mcp.
  */
 export async function startMcpServer() {
-  const apiUrl = process.env.VEXIS_API_URL || process.env.AGENT_SHIELD_API_URL;
-  const apiKey = process.env.VEXIS_API_KEY || process.env.AGENT_SHIELD_API_KEY;
+  const apiUrl = process.env.PALVERON_API_URL || process.env.AGENT_SHIELD_API_URL;
+  const apiKey = process.env.PALVERON_API_KEY || process.env.AGENT_SHIELD_API_KEY;
   const llmApiKey =
     process.env.OPENAI_API_KEY ||
     process.env.ANTHROPIC_API_KEY ||
@@ -28,7 +28,7 @@ export async function startMcpServer() {
 
   if (!apiUrl || !apiKey) {
     writeError(
-      'Missing required environment variables: VEXIS_API_URL and VEXIS_API_KEY (or AGENT_SHIELD_API_URL and AGENT_SHIELD_API_KEY)'
+      'Missing required environment variables: PALVERON_API_URL and PALVERON_API_KEY (or AGENT_SHIELD_API_URL and AGENT_SHIELD_API_KEY)'
     );
     process.exit(1);
   }
