@@ -89,7 +89,7 @@ async function handleMessage(message, client, agentId) {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: {
-          name: 'agent-shield',
+          name: 'palveron-governance',
           version: '0.1.0',
         },
       });
@@ -105,7 +105,7 @@ async function handleMessage(message, client, agentId) {
           {
             name: 'governance_check',
             description:
-              'Check if a tool call is allowed by governance policies. ' +
+              'Check if a tool call is allowed by Palveron governance policies. ' +
               'Call this BEFORE executing any HIGH-RISK action (exec, shell, ' +
               'delete_file, git_push, http_request, install_package). ' +
               'Returns ALLOW, BLOCK (with reason), or MODIFY (with sanitized version).',

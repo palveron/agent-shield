@@ -1,5 +1,5 @@
 // src/index.mjs
-// Public API for @brand/agent-shield
+// Public API for @palveron/agent-shield
 // This package is a thin client — NO proprietary logic.
 
 export { ShieldClient, ShieldApiError } from './client.mjs';

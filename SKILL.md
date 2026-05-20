@@ -66,7 +66,7 @@ If decision has _fallback == true:
 
 ```bash
 # Install
-npm install -g @PLACEHOLDER_SCOPE/agent-shield
+npm install -g @palveron/agent-shield
 
 # Set environment variables
 export PALVERON_API_KEY="your-api-key"     # From dashboard

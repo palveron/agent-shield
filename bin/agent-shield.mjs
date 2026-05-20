@@ -54,7 +54,7 @@ async function cmdInit() {
   const client = createClient(config);
 
   log('');
-  log('🛡️  agent-shield — Setting up protection...');
+  log('🛡️  Palveron agent-shield — Setting up protection...');
   log('');
 
   // 1. Validate API key
@@ -137,7 +137,7 @@ async function cmdStatus() {
   const client = createClient(config);
 
   log('');
-  log('🛡️  agent-shield — Status');
+  log('🛡️  Palveron agent-shield — Status');
   log('');
 
   try {
@@ -179,7 +179,7 @@ async function cmdTest() {
   const client = createClient(config);
 
   log('');
-  log('🛡️  agent-shield — Test Run');
+  log('🛡️  Palveron agent-shield — Test Run');
   log('');
 
   const testCases = [
@@ -230,7 +230,7 @@ async function cmdTest() {
 
 function cmdHelp() {
   log('');
-  log('🛡️  agent-shield — Control Layer for OpenClaw Agents');
+  log('🛡️  Palveron agent-shield — Control Layer for OpenClaw Agents');
   log('');
   log('Usage:');
   log('  npx agent-shield init     Set up Shield (8 rules, register agent)');

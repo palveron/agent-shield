@@ -10,7 +10,7 @@ agent-shield shows you everything your OpenClaw agent does, blocks dangerous act
 
 ```bash
 # 1. Install
-npm install -g @PLACEHOLDER_SCOPE/agent-shield
+npm install -g @palveron/agent-shield
 
 # 2. Set your keys
 export PALVERON_API_KEY="your-key"        # from dashboard signup
@@ -83,7 +83,7 @@ npx agent-shield help       # Usage information
 ## Programmatic Usage
 
 ```javascript
-import { ShieldClient } from '@PLACEHOLDER_SCOPE/agent-shield';
+import { ShieldClient } from '@palveron/agent-shield';
 
 const client = new ShieldClient({
   apiUrl: process.env.PALVERON_API_URL,
