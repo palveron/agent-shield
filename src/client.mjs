@@ -3,9 +3,11 @@
 // This is a thin client — NO PII patterns, NO policy evaluation, NO engine logic.
 // Only HTTP calls to POST /api/v1/verify and setup endpoints.
 
+import { CircuitBreaker } from './circuit-breaker.mjs';
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_RETRIES = 2;
-const CIRCUIT_BREAKER_THRESHOLD = 5;
+const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_RESET_MS = 30000;
 
 export class ShieldClient {
@@ -21,8 +23,9 @@ export class ShieldClient {
    * @param {string} options.apiKey    - Project API key (pv_live_xxx or pv_test_xxx)
    * @param {string} [options.llmApiKey] - User's LLM API key for BYOM 2-pass analysis
    * @param {number} [options.timeout]   - Request timeout in ms (default: 5000)
+   * @param {CircuitBreaker} [options.circuitBreaker] - Inject a pre-built breaker (mainly for tests).
    */
-  constructor({ apiUrl, apiKey, llmApiKey, timeout = DEFAULT_TIMEOUT_MS }) {
+  constructor({ apiUrl, apiKey, llmApiKey, timeout = DEFAULT_TIMEOUT_MS, circuitBreaker } = {}) {
     if (!apiUrl) throw new Error('apiUrl is required');
     if (!apiKey) throw new Error('apiKey is required');
 
@@ -30,11 +33,15 @@ export class ShieldClient {
     this.#apiKey = apiKey;
     this.#llmApiKey = llmApiKey || null;
     this.#timeout = timeout;
-    this.#circuitBreaker = {
-      failures: 0,
-      lastFailure: 0,
-      isOpen: false,
-    };
+    this.#circuitBreaker = circuitBreaker || new CircuitBreaker({
+      threshold: CIRCUIT_BREAKER_THRESHOLD,
+      resetMs: CIRCUIT_BREAKER_RESET_MS,
+    });
+  }
+
+  /** @returns {string} Current breaker state — 'CLOSED' | 'OPEN' | 'HALF_OPEN'. */
+  get circuitState() {
+    return this.#circuitBreaker.state;
   }
 
   /**
@@ -97,19 +104,14 @@ export class ShieldClient {
   // ─── Internal ──────────────────────────────────────────────────────
 
   async #request(method, path, body = null) {
-    // Circuit breaker check
-    if (this.#circuitBreaker.isOpen) {
-      const elapsed = Date.now() - this.#circuitBreaker.lastFailure;
-      if (elapsed < CIRCUIT_BREAKER_RESET_MS) {
-        return {
-          decision: 'ALLOW',
-          reason: 'circuit_breaker_open',
-          _fallback: true,
-        };
-      }
-      // Reset circuit breaker — try again
-      this.#circuitBreaker.isOpen = false;
-      this.#circuitBreaker.failures = 0;
+    // Circuit breaker: fail open instantly while OPEN, never block the agent.
+    if (!this.#circuitBreaker.beforeRequest()) {
+      return {
+        decision: 'ALLOW',
+        reason: 'circuit_open',
+        cached: false,
+        _fallback: true,
+      };
     }
 
     const url = `${this.#apiUrl}${path}`;
@@ -123,23 +125,26 @@ export class ShieldClient {
       headers['X-LLM-API-Key'] = this.#llmApiKey;
     }
 
-    const fetchOptions = {
-      method,
-      headers,
-      signal: AbortSignal.timeout(this.#timeout),
-    };
-
-    if (body && method !== 'GET') {
-      fetchOptions.body = JSON.stringify(body);
-    }
+    const serializedBody = body && method !== 'GET' ? JSON.stringify(body) : undefined;
 
     let lastError;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // Each attempt gets a fresh timeout signal — reusing one across retries
+      // means a single timeout kills every retry.
+      const fetchOptions = {
+        method,
+        headers,
+        signal: AbortSignal.timeout(this.#timeout),
+      };
+      if (serializedBody !== undefined) {
+        fetchOptions.body = serializedBody;
+      }
+
       try {
         const response = await fetch(url, fetchOptions);
 
         if (response.ok) {
-          this.#circuitBreaker.failures = 0;
+          this.#circuitBreaker.recordSuccess();
           return response.json();
         }
 
@@ -176,18 +181,15 @@ export class ShieldClient {
       }
     }
 
-    // All retries exhausted — update circuit breaker
-    this.#circuitBreaker.failures++;
-    this.#circuitBreaker.lastFailure = Date.now();
-    if (this.#circuitBreaker.failures >= CIRCUIT_BREAKER_THRESHOLD) {
-      this.#circuitBreaker.isOpen = true;
-    }
+    // All retries exhausted — record one failure against the breaker.
+    this.#circuitBreaker.recordFailure();
 
     // CRITICAL: On failure, ALLOW the action to proceed.
     // Agent-shield must never block the user's workflow due to our own outage.
     return {
       decision: 'ALLOW',
       reason: 'api_unreachable',
+      cached: false,
       _fallback: true,
       _error: lastError?.message,
     };
