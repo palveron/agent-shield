@@ -21,12 +21,11 @@ function resolveConfig() {
   const apiKey =
     process.env.PALVERON_API_KEY ||
     process.env.AGENT_SHIELD_API_KEY;
-  const llmApiKey =
-    process.env.OPENAI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.LLM_API_KEY;
 
-  return { apiUrl, apiKey, llmApiKey };
+  // BYOM (Bring Your Own Model) keys are configured in the dashboard
+  // (Settings → Neural Gateway) and used server-side. agent-shield does NOT
+  // read or forward an LLM key.
+  return { apiUrl, apiKey };
 }
 
 function createClient(config) {
@@ -43,7 +42,6 @@ function createClient(config) {
   return new ShieldClient({
     apiUrl: config.apiUrl,
     apiKey: config.apiKey,
-    llmApiKey: config.llmApiKey,
   });
 }
 
@@ -71,11 +69,17 @@ async function cmdInit() {
 
   // 2. Setup Shield
   step('Activating Shield protection rules...');
+  let activatedTotal = 0;
   try {
     const result = await client.setupShield({
       hostname: hostname(),
     });
-    ok(`Shield activated: ${result.policies_activated + result.policies_created} protection rules`);
+    // Report the REAL number the server activated/created — never a hardcoded
+    // count. activated = pre-seeded system policies switched on; created = the
+    // OpenClaw-specific policies this call inserted.
+    activatedTotal =
+      (result.policies_activated ?? 0) + (result.policies_created ?? 0);
+    ok(`Shield activated: ${activatedTotal} protection rule${activatedTotal === 1 ? '' : 's'}`);
     if (result.agent_name) {
       ok(`Agent "${result.agent_name}" registered`);
     }
@@ -96,7 +100,7 @@ async function cmdInit() {
     log('');
     log(`  "agent-shield": {`);
     log(`    "command": "npx",`);
-    log(`    "args": ["-y", "agent-shield-mcp"],`);
+    log(`    "args": ["-y", "-p", "@palveron/agent-shield", "agent-shield-mcp"],`);
     log(`    "env": {`);
     log(`      "PALVERON_API_URL": "${config.apiUrl || 'YOUR_API_URL'}",`);
     log(`      "PALVERON_API_KEY": "${maskKey(config.apiKey)}"`);
@@ -116,17 +120,9 @@ async function cmdInit() {
   log('');
   log('  ✅ Shield is active. Your agent is protected.');
   log('');
-  log('  8 protection rules are now enforcing:');
-  log('  • Secret-Exfiltration-Shield  → BLOCK leaked keys');
-  log('  • Shell-Injection-Guard       → BLOCK dangerous commands');
-  log('  • Destructive-Actions-Shield  → BLOCK rm -rf, DROP TABLE');
-  log('  • Package-Install-Watchdog    → APPROVAL for installs');
-  log('  • Social-Media-Output-Guard   → ANONYMIZE PII in posts');
-  log('  • GDPR Privacy Shield         → ANONYMIZE personal data');
-  log('  • Circuit Breaker             → BLOCK agent loops');
-  log('  • Fiscal Authority Limit      → APPROVAL for >€1,000');
+  log(`  ${activatedTotal} protection rule${activatedTotal === 1 ? '' : 's'} now enforcing for this project.`);
   log('');
-  log('  Run "agent-shield status" to see 24h protection stats.');
+  log('  Run "agent-shield status" to see the active rules and 24h stats.');
   log('');
   log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   log('');
@@ -233,7 +229,7 @@ function cmdHelp() {
   log('🛡️  Palveron agent-shield — Control Layer for OpenClaw Agents');
   log('');
   log('Usage:');
-  log('  npx agent-shield init     Set up Shield (8 rules, register agent)');
+  log('  npx agent-shield init     Set up Shield, activate rules, register agent');
   log('  npx agent-shield status   Show Shield status + 24h stats');
   log('  npx agent-shield test     Run test governance checks');
   log('  npx agent-shield help     Show this help');
@@ -241,9 +237,16 @@ function cmdHelp() {
   log('Environment Variables:');
   log('  PALVERON_API_URL      Governance API URL');
   log('  PALVERON_API_KEY      Your project API key');
-  log('  OPENAI_API_KEY     Your LLM key (for BYOM 2-pass analysis)');
   log('');
-  log('See: https://palveron.com/docs/openclaw');
+  log('  AGENT_SHIELD_FAIL_CLOSED   Optional. "true" forces fail-closed (BLOCK) for');
+  log('                             ALL risk levels if the gateway is unreachable.');
+  log('                             Default: tiered (HIGH-risk fails closed,');
+  log('                             MEDIUM/LOW fail open).');
+  log('');
+  log('  BYOM (Bring Your Own Model): configure your LLM key in the dashboard');
+  log('  (Settings → Neural Gateway). It is used server-side — not via env here.');
+  log('');
+  log('See: https://docs.palveron.com/en/docs/integrations/openclaw');
   log('');
 }
 
@@ -269,7 +272,10 @@ async function updateOpenClawConfig(config) {
 
       ocConfig.mcpServers['agent-shield'] = {
         command: 'npx',
-        args: ['-y', 'agent-shield-mcp'],
+        // agent-shield-mcp is a bin INSIDE @palveron/agent-shield, not a
+        // standalone package. `-p` points npx at the right package so the
+        // invocation resolves whether or not the package is installed globally.
+        args: ['-y', '-p', '@palveron/agent-shield', 'agent-shield-mcp'],
         env: {
           PALVERON_API_URL: config.apiUrl || '',
           PALVERON_API_KEY: config.apiKey || '',

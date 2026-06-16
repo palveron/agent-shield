@@ -1,206 +1,212 @@
 // src/client.mjs
-// HTTP client for the governance API.
-// This is a thin client — NO PII patterns, NO policy evaluation, NO engine logic.
-// Only HTTP calls to POST /api/v1/verify and setup endpoints.
+// agent-shield HTTP facade over @palveron/sdk.
+//
+// Single Source of Truth for the verify contract (Analysis §1.2 / Block B1):
+// agent-shield no longer hand-builds the /verify request body. @palveron/sdk
+// owns the wire format (`prompt` top-level, `context.tool_name`,
+// `metadata` passthrough), the retry logic, and the circuit breaker. Two
+// implementations of the same contract were the root cause of the
+// launch-blocking silent-ALLOW bug; collapsing them to one removes the drift.
+//
+// agent-shield keeps only the OpenClaw-specific concerns:
+//   • the tiered fail policy (Block B3, src/fail-policy.mjs);
+//   • the OpenClaw Shield setup/status endpoints the generic SDK does not
+//     cover — thin helpers that reuse the SDK auth scheme and THROW on
+//     non-2xx (control-plane calls are never silent);
+//   • normalization of the SDK's canonical decisions into the
+//     ALLOW / BLOCK / MODIFY / APPROVAL vocabulary SKILL.md and the MCP tool
+//     speak.
 
-import { CircuitBreaker } from './circuit-breaker.mjs';
+import { Palveron } from '@palveron/sdk';
+import { classifyRisk } from './risk-classifier.mjs';
+import { isFailLoud, transportFallback } from './fail-policy.mjs';
 
 const DEFAULT_TIMEOUT_MS = 5000;
-const MAX_RETRIES = 2;
-const CIRCUIT_BREAKER_THRESHOLD = 3;
-const CIRCUIT_BREAKER_RESET_MS = 30000;
+const SHIELD_REQUEST_TIMEOUT_MS = 10000;
 
-export class ShieldClient {
-  #apiUrl;
-  #apiKey;
-  #llmApiKey;
-  #timeout;
-  #circuitBreaker;
-
-  /**
-   * @param {object} options
-   * @param {string} options.apiUrl    - Base URL of the governance API (e.g. https://api.palveron.com)
-   * @param {string} options.apiKey    - Project API key (pv_live_xxx or pv_test_xxx)
-   * @param {string} [options.llmApiKey] - User's LLM API key for BYOM 2-pass analysis
-   * @param {number} [options.timeout]   - Request timeout in ms (default: 5000)
-   * @param {CircuitBreaker} [options.circuitBreaker] - Inject a pre-built breaker (mainly for tests).
-   */
-  constructor({ apiUrl, apiKey, llmApiKey, timeout = DEFAULT_TIMEOUT_MS, circuitBreaker } = {}) {
-    if (!apiUrl) throw new Error('apiUrl is required');
-    if (!apiKey) throw new Error('apiKey is required');
-
-    this.#apiUrl = apiUrl.replace(/\/$/, '');
-    this.#apiKey = apiKey;
-    this.#llmApiKey = llmApiKey || null;
-    this.#timeout = timeout;
-    this.#circuitBreaker = circuitBreaker || new CircuitBreaker({
-      threshold: CIRCUIT_BREAKER_THRESHOLD,
-      resetMs: CIRCUIT_BREAKER_RESET_MS,
-    });
-  }
-
-  /** @returns {string} Current breaker state — 'CLOSED' | 'OPEN' | 'HALF_OPEN'. */
-  get circuitState() {
-    return this.#circuitBreaker.state;
-  }
-
-  /**
-   * Verify a tool call / action before execution.
-   * This is the core governance check — every HIGH-RISK tool call goes through here.
-   *
-   * @param {object} params
-   * @param {string} params.agentId   - Agent identifier
-   * @param {string} params.toolName  - Tool being called (e.g. "exec", "delete_file")
-   * @param {string} params.input     - The input/prompt being sent to the tool
-   * @param {string} [params.output]  - The output from the tool (for output governance)
-   * @param {object} [params.metadata] - Additional context (risk_level, category, etc.)
-   * @returns {Promise<VerifyResponse>}
-   */
-  async verify({ agentId, toolName, input, output, metadata = {} }) {
-    return this.#request('POST', '/api/v1/verify', {
-      agent_id: agentId,
-      tool_name: toolName,
-      input,
-      output: output || null,
-      metadata: {
-        ...metadata,
-        source: 'agent-shield',
-        llm_api_key: this.#llmApiKey || undefined,
-      },
-    });
-  }
-
-  /**
-   * Initialize Shield — activates 8 protection rules for the project.
-   * Idempotent — safe to call multiple times.
-   *
-   * @param {object} params
-   * @param {string} params.hostname - Machine hostname for default agent registration
-   * @returns {Promise<ShieldSetupResponse>}
-   */
-  async setupShield({ hostname }) {
-    return this.#request('POST', '/api/v1/setup/openclaw-shield', {
-      hostname,
-      llm_provider: this.#llmApiKey ? 'configured' : null,
-    });
-  }
-
-  /**
-   * Get current Shield status — active policies, 24h stats.
-   * @returns {Promise<ShieldStatusResponse>}
-   */
-  async getShieldStatus() {
-    return this.#request('GET', '/api/v1/shield/status');
-  }
-
-  /**
-   * Health check — verify API is reachable.
-   * @returns {Promise<{status: string, version: string}>}
-   */
-  async health() {
-    return this.#request('GET', '/api/v1/health');
-  }
-
-  // ─── Internal ──────────────────────────────────────────────────────
-
-  async #request(method, path, body = null) {
-    // Circuit breaker: fail open instantly while OPEN, never block the agent.
-    if (!this.#circuitBreaker.beforeRequest()) {
-      return {
-        decision: 'ALLOW',
-        reason: 'circuit_open',
-        cached: false,
-        _fallback: true,
-      };
-    }
-
-    const url = `${this.#apiUrl}${path}`;
-    const headers = {
-      'Content-Type': 'application/json',
-      'X-API-Key': this.#apiKey,
-    };
-
-    // Forward LLM key for BYOM 2-pass analysis
-    if (this.#llmApiKey) {
-      headers['X-LLM-API-Key'] = this.#llmApiKey;
-    }
-
-    const serializedBody = body && method !== 'GET' ? JSON.stringify(body) : undefined;
-
-    let lastError;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      // Each attempt gets a fresh timeout signal — reusing one across retries
-      // means a single timeout kills every retry.
-      const fetchOptions = {
-        method,
-        headers,
-        signal: AbortSignal.timeout(this.#timeout),
-      };
-      if (serializedBody !== undefined) {
-        fetchOptions.body = serializedBody;
-      }
-
-      try {
-        const response = await fetch(url, fetchOptions);
-
-        if (response.ok) {
-          this.#circuitBreaker.recordSuccess();
-          return response.json();
-        }
-
-        // Don't retry 4xx errors (client errors)
-        if (response.status >= 400 && response.status < 500) {
-          const errorBody = await response.json().catch(() => ({}));
-          throw new ShieldApiError(
-            errorBody.error || `API error: ${response.status}`,
-            response.status,
-            errorBody
-          );
-        }
-
-        // 5xx — retry
-        lastError = new ShieldApiError(
-          `Server error: ${response.status}`,
-          response.status
-        );
-      } catch (err) {
-        if (err instanceof ShieldApiError) throw err;
-        if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-          lastError = new ShieldApiError('Request timed out', 0);
-        } else {
-          lastError = new ShieldApiError(
-            err.message || 'Network error',
-            0
-          );
-        }
-      }
-
-      // Exponential backoff before retry
-      if (attempt < MAX_RETRIES) {
-        await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt)));
-      }
-    }
-
-    // All retries exhausted — record one failure against the breaker.
-    this.#circuitBreaker.recordFailure();
-
-    // CRITICAL: On failure, ALLOW the action to proceed.
-    // Agent-shield must never block the user's workflow due to our own outage.
-    return {
-      decision: 'ALLOW',
-      reason: 'api_unreachable',
-      cached: false,
-      _fallback: true,
-      _error: lastError?.message,
-    };
+/**
+ * Map a canonical SDK decision (Sprint 87 gateway vocabulary) to the
+ * agent-facing ALLOW / BLOCK / MODIFY / APPROVAL the MCP tool returns.
+ * @param {string} sdkDecision
+ * @returns {'ALLOW'|'BLOCK'|'MODIFY'|'APPROVAL'}
+ */
+export function normalizeDecision(sdkDecision) {
+  switch (sdkDecision) {
+    case 'BLOCKED':
+      return 'BLOCK';
+    case 'MODIFIED':
+      return 'MODIFY';
+    case 'PENDING_APPROVAL':
+      return 'APPROVAL';
+    case 'PASSED':
+    case 'ALLOWED':
+    case 'FLAGGED':
+    case 'POLICY_CHANGE':
+      return 'ALLOW';
+    default:
+      // Unknown success-class string — default to ALLOW. Failures never reach
+      // here: they either throw (fail-loud) or are mapped by the fail policy.
+      return 'ALLOW';
   }
 }
 
-export class ShieldApiError extends Error {
-  constructor(message, statusCode, body = null) {
-    super(message);
-    this.name = 'ShieldApiError';
-    this.statusCode = statusCode;
-    this.body = body;
+export class ShieldClient {
+  #sdk;
+  #apiUrl;
+  #apiKey;
+
+  /**
+   * @param {object} options
+   * @param {string} options.apiUrl  - Base URL of the governance gateway.
+   * @param {string} options.apiKey  - Project API key (pv_live_* / pv_test_*).
+   * @param {number} [options.timeout]    - Per-request timeout in ms (default 5000).
+   * @param {number} [options.maxRetries] - SDK retry attempts (default: SDK default).
+   * @param {import('@palveron/sdk').Palveron} [options.sdk] - Inject a pre-built
+   *   SDK client (mainly for tests).
+   */
+  constructor({ apiUrl, apiKey, timeout = DEFAULT_TIMEOUT_MS, maxRetries, sdk } = {}) {
+    if (!apiUrl) throw new Error('apiUrl is required');
+    if (!apiKey) throw new Error('apiKey is required');
+
+    this.#apiUrl = apiUrl.replace(/\/+$/, '');
+    this.#apiKey = apiKey;
+    // Note: there is intentionally NO BYOM LLM-key forwarding. The gateway
+    // reads the BYOM provider key from the project record (Project.openaiKey,
+    // configured in the dashboard → Settings → Neural Gateway). Forwarding a
+    // user LLM key per request was dead weight the gateway never read.
+    this.#sdk =
+      sdk ||
+      new Palveron({
+        apiKey,
+        baseUrl: this.#apiUrl,
+        timeout,
+        ...(maxRetries !== undefined ? { maxRetries } : {}),
+      });
+  }
+
+  /** Current SDK circuit-breaker state — 'closed' | 'open' | 'half-open'. */
+  get circuitState() {
+    return this.#sdk.diagnostics().circuitState;
+  }
+
+  /**
+   * Verify a tool call / action before execution. Every HIGH-RISK tool call
+   * goes through here. Applies the tiered fail policy (B3): a genuine block
+   * surfaces as BLOCK; a contract/auth failure THROWS (fail-loud); a transport
+   * failure falls back tiered by risk (HIGH → BLOCK, MEDIUM/LOW → ALLOW).
+   *
+   * @param {object} params
+   * @param {string} [params.agentId]
+   * @param {string} [params.toolName]
+   * @param {string} params.input
+   * @param {object} [params.metadata]
+   * @returns {Promise<{decision:'ALLOW'|'BLOCK'|'MODIFY'|'APPROVAL', reason:(string|null), modified_input?:(string|null), trace_id?:(string|null), findings?:Array, _fallback?:boolean}>}
+   */
+  async verify({ agentId, toolName, input, metadata = {} }) {
+    const riskLevel = toolName ? classifyRisk(toolName) : 'MEDIUM';
+
+    try {
+      const res = await this.#sdk.verify({
+        prompt: input ?? '',
+        context: toolName ? { toolName } : undefined,
+        metadata: {
+          ...metadata,
+          ...(agentId ? { agent_id: agentId } : {}),
+          source: 'agent-shield',
+          risk_level: riskLevel,
+        },
+      });
+
+      // 429 is surfaced by the SDK as decision RATE_LIMITED (not an exception)
+      // on the governed verify path. Treat it as a transport failure, tiered.
+      if (res.decision === 'RATE_LIMITED') {
+        return transportFallback(riskLevel, {
+          errorMessage: 'rate_limited',
+          retryAfterMs: res.retryAfterMs,
+        });
+      }
+
+      return {
+        decision: normalizeDecision(res.decision),
+        sdk_decision: res.decision,
+        reason: res.reason || null,
+        modified_input: res.decision === 'MODIFIED' ? res.output || null : null,
+        trace_id: res.traceId || null,
+        findings: res.findings || [],
+      };
+    } catch (err) {
+      // FAIL-LOUD: a 400 (broken request body) or 401 (bad key) is our bug or a
+      // misconfiguration. Re-throw — never swallow into ALLOW. This is exactly
+      // the failure class the old silent fail-open hid.
+      if (isFailLoud(err)) throw err;
+
+      // Transport failure (timeout / circuit-open / network / 5xx) → tiered.
+      return transportFallback(riskLevel, { errorMessage: err?.message });
+    }
+  }
+
+  /** Gateway health (hits the real `/health`, via the SDK). */
+  async health() {
+    return this.#sdk.health();
+  }
+
+  /** List active policies (via the SDK). */
+  async listPolicies(env) {
+    return this.#sdk.listPolicies(env);
+  }
+
+  // ── OpenClaw Shield endpoints (not part of the generic SDK) ───────────────
+  // Thin control-plane helpers. They reuse the SDK's Bearer auth scheme and
+  // THROW on any non-2xx response — setup and status are never silent.
+
+  /**
+   * Initialize the OpenClaw Shield for the project (idempotent server-side).
+   * @param {object} params
+   * @param {string} params.hostname
+   * @returns {Promise<object>} ShieldSetupResponse
+   */
+  async setupShield({ hostname }) {
+    return this.#shieldRequest('POST', '/api/v1/setup/openclaw-shield', { hostname });
+  }
+
+  /**
+   * Current Shield status — active policies + 24h stats.
+   * @returns {Promise<object>} ShieldStatusResponse
+   */
+  async getShieldStatus() {
+    return this.#shieldRequest('GET', '/api/v1/shield/status');
+  }
+
+  async #shieldRequest(method, path, body) {
+    let res;
+    try {
+      res = await fetch(`${this.#apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.#apiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(SHIELD_REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new Error(`Shield ${method} ${path} failed: ${err?.message || err}`);
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      let detail = text;
+      try {
+        detail = JSON.parse(text).error || text;
+      } catch {
+        // keep raw text
+      }
+      throw new Error(
+        `Shield ${method} ${path} failed: HTTP ${res.status}${detail ? ` — ${detail}` : ''}`,
+      );
+    }
+
+    return res.json();
   }
 }

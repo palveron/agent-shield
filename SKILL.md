@@ -2,14 +2,18 @@
 
 **Your agent runs 24/7. Do you know what it's doing right now?**
 
-agent-shield shows you everything your OpenClaw agent does, blocks dangerous actions before they execute, and masks your personal data. One command. Zero config.
+agent-shield records everything your OpenClaw agent does, and asks you — the agent — to check high-risk actions **before** running them so dangerous ones can be stopped. It masks personal data on the way out. One command. Zero config.
+
+**Your part of the contract:** call `governance_check` before every high-risk tool call (the list below) and honor the decision. This is how "stop it before it runs" actually works — the check only protects an action you route through it first.
 
 ## What it does
 
-Before executing any HIGH-RISK tool call, check with the governance API. The API returns:
+Before executing any HIGH-RISK tool call, call `governance_check`. It returns one of:
 - **ALLOW** — proceed normally
 - **BLOCK** — do NOT execute. Tell the user why.
 - **MODIFY** — use the sanitized version instead
+- **APPROVAL** — a human must approve first. Do NOT execute; tell the user approval is required.
+- **ERROR** — the check could not complete (misconfig / contract error). Do NOT silently proceed on HIGH-RISK; warn the user.
 
 ## When to check
 
@@ -53,13 +57,24 @@ If decision == "MODIFY":
   - Use modified_input instead of original input
   - Tell the user: "🔄 Input was sanitized by Shield"
 
+If decision == "APPROVAL":
+  - Do NOT execute yet — a human must approve
+  - Tell the user: "⏸ Awaiting approval (Shield): {reason}"
+
+If decision == "ERROR":
+  - The governance check failed to complete (e.g. config/contract error)
+  - Do NOT silently proceed on a HIGH-RISK action
+  - Tell the user: "⚠️ Governance check failed: {error}" and ask how to proceed
+
 If decision == "ALLOW":
   - Proceed normally
 
-If decision has _fallback == true:
-  - Governance API was unreachable
-  - Proceed with caution for MEDIUM-RISK
-  - For HIGH-RISK: warn the user that governance is offline
+If decision has _fallback == true (the gateway was unreachable):
+  - HIGH-RISK actions come back as BLOCK (fail-closed) — reason
+    "gateway_unavailable_failclosed". Do NOT execute; tell the user governance
+    is offline and the action was blocked for safety.
+  - MEDIUM/LOW-RISK actions come back as ALLOW (fail-open) — proceed, but note
+    governance was briefly offline.
 ```
 
 ## Setup
@@ -71,15 +86,19 @@ npm install -g @palveron/agent-shield
 # Set environment variables
 export PALVERON_API_KEY="your-api-key"     # From dashboard
 export PALVERON_API_URL="your-api-url"     # API endpoint
-export OPENAI_API_KEY="sk-..."          # Your LLM key (BYOM)
 
 # Initialize
 npx agent-shield init
 ```
 
+> BYOM (Bring Your Own Model): configure your LLM key in the dashboard
+> (Settings → Neural Gateway). It is used server-side — agent-shield does not
+> read or forward an LLM key from the environment.
+
 ## What's protected
 
-After initialization, 8 rules automatically protect your agent:
+After initialization, the OpenClaw Shield rule set protects your agent (`init`
+reports the exact number activated for your project):
 
 1. **Secret-Exfiltration-Shield** — Blocks API keys, private keys, JWTs in output
 2. **Shell-Injection-Guard** — Blocks curl|bash, chmod 777, eval()

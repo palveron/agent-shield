@@ -21,10 +21,6 @@ const PROTOCOL_VERSION = '2024-11-05';
 export async function startMcpServer() {
   const apiUrl = process.env.PALVERON_API_URL || process.env.AGENT_SHIELD_API_URL;
   const apiKey = process.env.PALVERON_API_KEY || process.env.AGENT_SHIELD_API_KEY;
-  const llmApiKey =
-    process.env.OPENAI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.LLM_API_KEY;
 
   if (!apiUrl || !apiKey) {
     writeError(
@@ -33,11 +29,13 @@ export async function startMcpServer() {
     process.exit(1);
   }
 
+  // BYOM note: the gateway uses the project's server-side LLM key
+  // (dashboard → Settings → Neural Gateway). No LLM key is read or forwarded here.
   const client = new ShieldClient({
     apiUrl,
     apiKey,
-    llmApiKey,
     timeout: 3000, // MCP needs to be fast
+    maxRetries: 1, // fail fast on the hot path; the fail policy tiers the outcome
   });
 
   const agentId = process.env.AGENT_SHIELD_AGENT_ID || 'default';
@@ -191,12 +189,14 @@ async function handleToolCall(id, params, client, agentId) {
   }
 
   try {
+    // client.verify applies the tiered fail policy (B3): a real verdict, or a
+    // risk-tiered fallback on transport failure (HIGH → BLOCK, MEDIUM/LOW →
+    // ALLOW). It only THROWS for fail-loud contract/auth failures (next catch).
     const result = await client.verify({
       agentId,
       toolName,
       input,
       metadata: {
-        risk_level: classifyRisk(toolName),
         context: args?.context || null,
       },
     });
@@ -206,25 +206,31 @@ async function handleToolCall(id, params, client, agentId) {
         {
           type: 'text',
           text: JSON.stringify({
-            decision: result.decision || 'ALLOW',
+            decision: result.decision,
             reason: result.reason || null,
             modified_input: result.modified_input || null,
             trace_id: result.trace_id || null,
             risk_level: classifyRisk(toolName),
+            ...(result._fallback ? { _fallback: true } : {}),
           }),
         },
       ],
     });
   } catch (err) {
-    // On error, ALLOW — never block the user's workflow due to our failure
+    // FAIL-LOUD: a contract (400) or auth (401) failure is our bug or a
+    // misconfiguration. NEVER report ALLOW — that is exactly what hid the
+    // launch-blocking governance gap. Surface an explicit ERROR so the agent
+    // (per SKILL.md) treats high-risk actions with caution instead of
+    // proceeding silently.
     sendResponse(id, {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            decision: 'ALLOW',
-            reason: 'governance_api_error',
-            error: err.message,
+            decision: 'ERROR',
+            reason: 'governance_check_failed',
+            error: err?.message || String(err),
+            risk_level: classifyRisk(toolName),
           }),
         },
       ],

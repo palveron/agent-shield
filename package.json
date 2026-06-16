@@ -41,6 +41,10 @@
   "scripts": {
     "test": "node --test"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@palveron/sdk": "^1.1.0"
+  }
 }
