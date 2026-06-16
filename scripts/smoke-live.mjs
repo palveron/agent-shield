@@ -3,9 +3,11 @@
 // Live end-to-end smoke for agent-shield against a real Palveron Gateway.
 // NOT shipped in the npm package (not listed in package.json "files").
 //
-// SAFETY: refuses to run unless PALVERON_API_KEY starts with "pv_test_".
-// `init` (setupShield) writes policies + an agent into the project, so this
-// must only ever run against a TEST project — never the production core key.
+// SAFETY: `init` (setupShield) writes policies + an agent into the project, so
+// this must only ever run against a disposable project — never the production
+// core key. The default guard requires a TEST key (pv_test_…). A pv_live_ key
+// is allowed ONLY with an explicit, conscious override for a dedicated
+// throwaway project (SMOKE_I_UNDERSTAND="throwaway-project").
 //
 // Usage (PowerShell):
 //   $env:PALVERON_API_KEY="pv_test_xxx"
@@ -14,6 +16,9 @@
 //
 // Usage (bash):
 //   PALVERON_API_KEY=pv_test_xxx node scripts/smoke-live.mjs
+//
+// Override for a dedicated throwaway project with a pv_live_ key (NEVER core):
+//   SMOKE_I_UNDERSTAND=throwaway-project PALVERON_API_KEY=pv_live_xxx node scripts/smoke-live.mjs
 //
 // Exit code 0 = all hard expectations met. Non-zero = a hard check failed.
 
@@ -41,12 +46,21 @@ if (!API_KEY) {
   console.error('Missing PALVERON_API_KEY. Set a TEST project key (pv_test_…).');
   process.exit(2);
 }
+
+// A pv_test_ key runs as before. Any other key (e.g. pv_live_) runs ONLY with a
+// conscious override for a dedicated throwaway project — never the core key.
 if (!API_KEY.startsWith('pv_test_')) {
-  console.error(
-    'Refusing to run: PALVERON_API_KEY must start with "pv_test_". ' +
-      'This smoke calls init (writes policies + an agent), so it must target a TEST project, never production.',
-  );
-  process.exit(2);
+  if (process.env.SMOKE_I_UNDERSTAND !== 'throwaway-project') {
+    console.error(
+      'Refusing to run: PALVERON_API_KEY does not start with "pv_test_".\n' +
+        'This smoke calls init (writes policies + an agent), so a non-test key is only\n' +
+        'allowed against a DEDICATED THROWAWAY project — NEVER the production core key.\n' +
+        'To override, set SMOKE_I_UNDERSTAND="throwaway-project" (and be certain the key\n' +
+        'belongs to a disposable project).',
+    );
+    process.exit(2);
+  }
+  console.warn('⚠️  running against a pv_live_ key — throwaway project only');
 }
 
 line('');
@@ -81,11 +95,18 @@ try {
   }
   line('');
 
-  // 3. Destructive action → expect BLOCK ───────────────────────────────
-  line('3) Destructive action (exec "rm -rf /") → expect BLOCK');
+  // 3. Destructive action → expect BLOCK or APPROVAL ────────────────────
+  // The catalog provisions `destructive_action` as REQUIRE_APPROVAL, so a
+  // governed destructive command surfaces as APPROVAL (not BLOCK). Both are a
+  // successful "did not silently allow a destructive action" outcome.
+  line('3) Destructive action (exec "rm -rf /") → expect BLOCK or APPROVAL');
   {
     const r = await client.verify({ agentId: 'smoke', toolName: 'exec', input: 'rm -rf /' });
-    check('destructive blocked', r.decision === 'BLOCK', `decision=${r.decision} sdk=${r.sdk_decision} reason=${r.reason}`);
+    check(
+      'destructive gated',
+      r.decision === 'BLOCK' || r.decision === 'APPROVAL',
+      `decision=${r.decision} sdk=${r.sdk_decision} reason=${r.reason}`,
+    );
   }
   line('');
 
