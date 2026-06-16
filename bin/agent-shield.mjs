@@ -69,17 +69,19 @@ async function cmdInit() {
 
   // 2. Setup Shield
   step('Activating Shield protection rules...');
-  let activatedTotal = 0;
+  let activeTotal = 0;
   try {
     const result = await client.setupShield({
       hostname: hostname(),
     });
-    // Report the REAL number the server activated/created — never a hardcoded
-    // count. activated = pre-seeded system policies switched on; created = the
-    // OpenClaw-specific policies this call inserted.
-    activatedTotal =
-      (result.policies_activated ?? 0) + (result.policies_created ?? 0);
-    ok(`Shield activated: ${activatedTotal} protection rule${activatedTotal === 1 ? '' : 's'}`);
+    // Report the REAL number of active protection rules — never a hardcoded
+    // count. Prefer the gateway's truthful `policies_active` count (stable on
+    // idempotent re-runs); fall back to the legacy created/activated sum for
+    // older gateways that don't return it yet.
+    activeTotal =
+      result.policies_active ??
+      ((result.policies_activated ?? 0) + (result.policies_created ?? 0));
+    ok(`Shield activated: ${activeTotal} protection rule${activeTotal === 1 ? '' : 's'} active`);
     if (result.agent_name) {
       ok(`Agent "${result.agent_name}" registered`);
     }
@@ -120,7 +122,7 @@ async function cmdInit() {
   log('');
   log('  ✅ Shield is active. Your agent is protected.');
   log('');
-  log(`  ${activatedTotal} protection rule${activatedTotal === 1 ? '' : 's'} now enforcing for this project.`);
+  log(`  ${activeTotal} protection rule${activeTotal === 1 ? '' : 's'} now enforcing for this project.`);
   log('');
   log('  Run "agent-shield status" to see the active rules and 24h stats.');
   log('');

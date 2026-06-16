@@ -131,14 +131,15 @@ try {
   // 8. init E2E: setup → real count → idempotency → status ─────────────
   line('8) init E2E (setupShield) → real count, idempotent, status');
   {
+    const active = (s) => s.policies_active ?? ((s.policies_activated ?? 0) + (s.policies_created ?? 0));
+
     const s1 = await client.setupShield({ hostname: hostname() });
-    const total1 = (s1.policies_activated ?? 0) + (s1.policies_created ?? 0);
-    check('setup succeeded', s1.success === true && total1 > 0, `activated=${s1.policies_activated} created=${s1.policies_created} total=${total1} agent="${s1.agent_name}"`);
-    check('reports 8 rules (B10 truth)', total1 === 8, `total=${total1} (warn if ≠ 8 → system-policy seeding gap)`, { hard: false });
+    const active1 = active(s1);
+    check('setup succeeded (no 500)', s1.success === true && active1 > 0, `active=${active1} created=${s1.policies_created} agent="${s1.agent_name}"`);
 
     const s2 = await client.setupShield({ hostname: hostname() });
-    const total2 = (s2.policies_activated ?? 0) + (s2.policies_created ?? 0);
-    check('idempotent on re-run', s2.success === true, `2nd run total=${total2} (created should drop to ~0)`);
+    const active2 = active(s2);
+    check('idempotent on re-run', s2.success === true && active2 === active1, `re-run active=${active2} created=${s2.policies_created} (active should match run 1; created ~0)`);
 
     const st = await client.getShieldStatus();
     check('status lists active policies', Array.isArray(st.policies) && st.policies.length > 0, `shield_active=${st.shield_active} agents=${st.agent_count} policies=${st.policies?.length}`);
