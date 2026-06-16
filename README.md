@@ -157,7 +157,7 @@ governance:
 | Gateway returns a verdict | The real decision is used (`ALLOW` / `BLOCK` / `MODIFY` / `APPROVAL`) |
 | **Contract / auth error** (bad request, invalid key) | **Fail LOUD** — the error is surfaced; **never** a silent `ALLOW` |
 | Gateway unreachable, **HIGH-risk** action (shell, exec, delete, `git_push`, destructive, secret-exfil) | **Fail CLOSED** — `BLOCK`. We do not let a dangerous action run unchecked during our downtime |
-| Gateway unreachable, MEDIUM / LOW-risk action | **Fail OPEN** — `ALLOW`, so a transient outage never blocks ordinary work |
+| Gateway unreachable, MEDIUM-risk action (incl. any unknown tool) | **Fail OPEN** — `ALLOW`, so a transient outage never blocks ordinary work |
 
 Set `AGENT_SHIELD_FAIL_CLOSED=true` to fail closed for **all** risk levels when the
 gateway is unreachable (maximum safety; availability traded away).

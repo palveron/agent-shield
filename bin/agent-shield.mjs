@@ -2,14 +2,13 @@
 // bin/agent-shield.mjs
 // CLI for agent-shield: init, status, test
 // Usage:
-//   npx agent-shield init     — Setup Shield (8 rules, register agent)
+//   npx agent-shield init     — Setup Shield (activate rules, register agent)
 //   npx agent-shield status   — Show Shield status + 24h stats
 //   npx agent-shield test     — Run a test governance check
 //   npx agent-shield help     — Show usage
 
 import { ShieldClient } from '../src/client.mjs';
-import { readFile, writeFile, access } from 'fs/promises';
-import { join } from 'path';
+import { updateOpenClawConfig } from '../src/openclaw-config.mjs';
 import { hostname } from 'os';
 
 // ─── Config Resolution ──────────────────────────────────────────────
@@ -210,9 +209,13 @@ async function cmdTest() {
         input: tc.input,
       });
 
-      const decision = result.decision || 'ALLOW';
+      // Never default a missing decision to ALLOW — a verdict-less response is
+      // an anomaly, not a pass. Surface it as ERROR.
+      const decision = result.decision || 'ERROR';
       if (decision === tc.expected) {
         ok(`${tc.name}: ${decision} ✓`);
+      } else if (decision === 'ERROR') {
+        warn(`${tc.name}: no decision returned (ERROR), expected ${tc.expected}`);
       } else {
         warn(`${tc.name}: got ${decision}, expected ${tc.expected}`);
       }
@@ -250,49 +253,6 @@ function cmdHelp() {
   log('');
   log('See: https://docs.palveron.com/en/docs/integrations/openclaw');
   log('');
-}
-
-// ─── OpenClaw Config Update ──────────────────────────────────────────
-
-async function updateOpenClawConfig(config) {
-  // Look for openclaw.json in current directory and common locations
-  const candidates = [
-    join(process.cwd(), 'openclaw.json'),
-    join(process.cwd(), '.openclaw', 'config.json'),
-  ];
-
-  for (const configPath of candidates) {
-    try {
-      await access(configPath);
-      const content = await readFile(configPath, 'utf8');
-      const ocConfig = JSON.parse(content);
-
-      // Add or update MCP server entry
-      if (!ocConfig.mcpServers) {
-        ocConfig.mcpServers = {};
-      }
-
-      ocConfig.mcpServers['agent-shield'] = {
-        command: 'npx',
-        // agent-shield-mcp is a bin INSIDE @palveron/agent-shield, not a
-        // standalone package. `-p` points npx at the right package so the
-        // invocation resolves whether or not the package is installed globally.
-        args: ['-y', '-p', '@palveron/agent-shield', 'agent-shield-mcp'],
-        env: {
-          PALVERON_API_URL: config.apiUrl || '',
-          PALVERON_API_KEY: config.apiKey || '',
-        },
-      };
-
-      await writeFile(configPath, JSON.stringify(ocConfig, null, 2) + '\n');
-      return true;
-    } catch {
-      // File doesn't exist or can't be read — try next
-      continue;
-    }
-  }
-
-  return false;
 }
 
 // ─── Output Helpers ──────────────────────────────────────────────────

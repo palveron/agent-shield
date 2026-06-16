@@ -30,6 +30,22 @@ const SHIELD_REQUEST_TIMEOUT_MS = 10000;
  * @param {string} sdkDecision
  * @returns {'ALLOW'|'BLOCK'|'MODIFY'|'APPROVAL'}
  */
+/**
+ * The SDK/gateway decisions `verify` explicitly understands. Anything outside
+ * this set is an anomaly (e.g. a future, more restrictive verdict) and is
+ * handled risk-tiered in `verify` — never silently allowed (F5).
+ */
+export const KNOWN_SDK_DECISIONS = new Set([
+  'PASSED',
+  'ALLOWED',
+  'FLAGGED',
+  'POLICY_CHANGE',
+  'BLOCKED',
+  'MODIFIED',
+  'PENDING_APPROVAL',
+  'RATE_LIMITED',
+]);
+
 export function normalizeDecision(sdkDecision) {
   switch (sdkDecision) {
     case 'BLOCKED':
@@ -44,8 +60,9 @@ export function normalizeDecision(sdkDecision) {
     case 'POLICY_CHANGE':
       return 'ALLOW';
     default:
-      // Unknown success-class string — default to ALLOW. Failures never reach
-      // here: they either throw (fail-loud) or are mapped by the fail policy.
+      // Only the known success classes above reach ALLOW. Unknown verdicts are
+      // intercepted upstream in `verify` (F5) and never reach this default for
+      // a real call — they are NOT silently allowed.
       return 'ALLOW';
   }
 }
@@ -124,6 +141,32 @@ export class ShieldClient {
           errorMessage: 'rate_limited',
           retryAfterMs: res.retryAfterMs,
         });
+      }
+
+      // F5: an unrecognized verdict (e.g. a future, stricter decision) must not
+      // be waved through. For a security tool, "unknown → ALLOW" is the wrong
+      // direction. Tier it: HIGH-risk fails closed; lower risk allows but flags
+      // the anomaly loudly so it surfaces in logs and traces.
+      if (!KNOWN_SDK_DECISIONS.has(res.decision)) {
+        console.warn(
+          `[agent-shield] unrecognized gateway decision: ${JSON.stringify(res.decision)} (riskLevel=${riskLevel})`,
+        );
+        if (riskLevel === 'HIGH') {
+          return {
+            decision: 'BLOCK',
+            reason: 'unknown_decision_failclosed',
+            _anomaly: true,
+            sdk_decision: res.decision,
+            trace_id: res.traceId || null,
+          };
+        }
+        return {
+          decision: 'ALLOW',
+          reason: 'unknown_decision',
+          _anomaly: true,
+          sdk_decision: res.decision,
+          trace_id: res.traceId || null,
+        };
       }
 
       return {

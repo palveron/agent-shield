@@ -10,7 +10,7 @@
 // 3. Returns ALLOW/BLOCK/MODIFY decisions
 
 import { ShieldClient } from './client.mjs';
-import { classifyRisk, shouldVerify } from './risk-classifier.mjs';
+import { classifyRisk } from './risk-classifier.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 
@@ -156,14 +156,19 @@ async function handleToolCall(id, params, client, agentId) {
   const toolName = args?.tool_name;
   const input = args?.input;
 
+  // F1: a malformed call (missing tool_name or input) must NEVER be a silent
+  // ALLOW — that is the one path that lets a broken/tampered governance_check
+  // bypass the gateway, and without tool_name the risk level isn't even
+  // knowable. Surface ERROR (SKILL.md handles it without proceeding on HIGH-RISK).
   if (!toolName || !input) {
     sendResponse(id, {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            decision: 'ALLOW',
-            reason: 'Missing tool_name or input — allowing by default',
+            decision: 'ERROR',
+            reason: 'missing_required_field',
+            error: 'governance_check requires tool_name and input',
           }),
         },
       ],
@@ -171,23 +176,10 @@ async function handleToolCall(id, params, client, agentId) {
     return;
   }
 
-  // Quick risk check — skip API call for truly LOW-RISK operations
-  if (!shouldVerify(toolName)) {
-    sendResponse(id, {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            decision: 'ALLOW',
-            reason: 'low_risk_tool',
-            risk_level: classifyRisk(toolName),
-          }),
-        },
-      ],
-    });
-    return;
-  }
-
+  // F4: there is no LOW skip tier. Every governance_check goes through
+  // client.verify so it is both evaluated AND recorded as a trace — a local
+  // skip would return ALLOW without a gateway call, making the action invisible
+  // in the dashboard (breaking the "see everything" promise).
   try {
     // client.verify applies the tiered fail policy (B3): a real verdict, or a
     // risk-tiered fallback on transport failure (HIGH → BLOCK, MEDIUM/LOW →

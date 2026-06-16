@@ -3,9 +3,10 @@
 // This package is a thin OpenClaw client over @palveron/sdk — NO proprietary
 // logic, NO duplicated verify contract.
 
-export { ShieldClient, normalizeDecision } from './client.mjs';
-export { classifyRisk, shouldVerify, isDestructive } from './risk-classifier.mjs';
+export { ShieldClient, normalizeDecision, KNOWN_SDK_DECISIONS } from './client.mjs';
+export { classifyRisk, isDestructive } from './risk-classifier.mjs';
 export { startMcpServer } from './mcp-server.mjs';
+export { updateOpenClawConfig } from './openclaw-config.mjs';
 export {
   transportFallback,
   isFailLoud,

@@ -17,9 +17,12 @@ Before executing any HIGH-RISK tool call, call `governance_check`. It returns on
 
 ## When to check
 
-ALWAYS call `governance_check` before these tool categories:
+Call `governance_check` before any tool call. Every checked call is verified
+**and** recorded as a trace — there is no "skip" tier. The risk level only
+changes what happens if the gateway is unreachable (see below); it never skips
+the check.
 
-### 🔴 Must check (HIGH-RISK)
+### 🔴 HIGH-RISK — verified; **fail-closed** (BLOCK) if the gateway is unreachable
 - `exec`, `shell`, `bash`, `run_command` — any shell execution
 - `delete_file`, `remove_file`, `write_file` — destructive file operations
 - `git_push`, `git_push_force`, `git_reset_hard` — irreversible git operations
@@ -28,15 +31,13 @@ ALWAYS call `governance_check` before these tool categories:
 - `send_email`, `send_message`, `post_tweet` — outbound communications
 - `transfer`, `payment`, `purchase` — financial operations
 
-### 🟡 Should check (MEDIUM-RISK)
-- `read_file`, `search_files` — file reads (may contain secrets)
+### 🟡 MEDIUM-RISK (incl. any unknown tool) — verified; **fail-open** (ALLOW) if the gateway is unreachable
+- `read_file`, `search_files`, `list_directory` — file reads (may contain secrets)
 - `memory_write`, `save_context` — persistent storage
 - `navigate`, `fill_form` — browser automation
+- any tool not in the HIGH list — treated as MEDIUM and still verified
 
-### 🟢 Skip (LOW-RISK)
-- `read_file` on non-sensitive paths
-- `list_directory`
-- Conversation responses (no tool call)
+The only thing you do **not** check is a pure conversational response (no tool call).
 
 ## How to check
 

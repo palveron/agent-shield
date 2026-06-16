@@ -1,8 +1,11 @@
 // src/risk-classifier.mjs
 // Local tool-risk classification for OpenClaw tool calls.
 // This is intentionally simple — the real intelligence lives server-side.
-// Only HIGH-RISK tools trigger a governance check (verify call).
-// LOW-RISK tools are logged as traces but not blocked.
+// There is no LOW skip tier: every governance_check is verified AND traced.
+// The classifier only decides the FAIL POLICY on a gateway outage:
+//   HIGH   → fail-closed (BLOCK)
+//   MEDIUM → fail-open  (ALLOW)
+// Unknown tools default to MEDIUM (never skipped).
 
 const HIGH_RISK_TOOLS = new Set([
   // Shell/System
@@ -40,10 +43,11 @@ const MEDIUM_RISK_TOOLS = new Set([
 ]);
 
 /**
- * Classify a tool call's risk level.
+ * Classify a tool call's risk level. Drives only the outage fail policy
+ * (HIGH → fail-closed, MEDIUM → fail-open). There is no LOW tier.
  *
  * @param {string} toolName - The tool being called
- * @returns {'HIGH' | 'MEDIUM' | 'LOW'}
+ * @returns {'HIGH' | 'MEDIUM'}
  */
 export function classifyRisk(toolName) {
   const normalized = toolName.toLowerCase().replace(/[-\s]/g, '_');
@@ -51,23 +55,9 @@ export function classifyRisk(toolName) {
   if (HIGH_RISK_TOOLS.has(normalized)) return 'HIGH';
   if (MEDIUM_RISK_TOOLS.has(normalized)) return 'MEDIUM';
 
-  // Unknown tools default to MEDIUM — better safe than sorry
-  // but not aggressive enough to block everything
+  // Unknown tools default to MEDIUM — verified like everything else, and
+  // fail-open on a gateway outage (only known-dangerous tools fail closed).
   return 'MEDIUM';
-}
-
-/**
- * Should this tool call be sent to the governance API?
- * HIGH → always verify
- * MEDIUM → verify (but don't block workflow if API is down)
- * LOW → skip (only log as trace)
- *
- * @param {string} toolName
- * @returns {boolean}
- */
-export function shouldVerify(toolName) {
-  const risk = classifyRisk(toolName);
-  return risk === 'HIGH' || risk === 'MEDIUM';
 }
 
 /**
