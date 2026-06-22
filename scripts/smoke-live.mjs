@@ -3,22 +3,22 @@
 // Live end-to-end smoke for agent-shield against a real Palveron Gateway.
 // NOT shipped in the npm package (not listed in package.json "files").
 //
-// SAFETY: `init` (setupShield) writes policies + an agent into the project, so
-// this must only ever run against a disposable project — never the production
-// core key. The default guard requires a TEST key (pv_test_…). A pv_live_ key
-// is allowed ONLY with an explicit, conscious override for a dedicated
-// throwaway project (SMOKE_I_UNDERSTAND="throwaway-project").
+// SAFETY: `init` (setupShield) WRITES policies + an agent into the project, so
+// this must only ever run against a DEDICATED, DISPOSABLE project — never a
+// production project. There is no test/sandbox key today: every Palveron key is
+// a live `pv_live_` key, so isolation comes from targeting a separate throwaway
+// project, NOT from a key prefix. The guard below makes that conscious by
+// requiring you to name the throwaway project (PALVERON_SMOKE_PROJECT).
 //
-// Usage (PowerShell):
-//   $env:PALVERON_API_KEY="pv_test_xxx"
-//   $env:PALVERON_API_URL="https://gateway.palveron.com"   # optional, this is the default
-//   node scripts/smoke-live.mjs
+// Configuration lives in `.env.smoke` (gitignored; copy from
+// `.env.smoke.example`). Run it with Node's native env-file loader — no extra
+// deps, no hidden magic:
 //
-// Usage (bash):
-//   PALVERON_API_KEY=pv_test_xxx node scripts/smoke-live.mjs
+//   node --env-file=.env.smoke scripts/smoke-live.mjs
 //
-// Override for a dedicated throwaway project with a pv_live_ key (NEVER core):
-//   SMOKE_I_UNDERSTAND=throwaway-project PALVERON_API_KEY=pv_live_xxx node scripts/smoke-live.mjs
+// Or pass the variables inline (bash):
+//   PALVERON_API_KEY=pv_live_xxx PALVERON_SMOKE_PROJECT=my-throwaway \
+//     node scripts/smoke-live.mjs
 //
 // Exit code 0 = all hard expectations met. Non-zero = a hard check failed.
 
@@ -27,6 +27,7 @@ import { ShieldClient } from '../src/client.mjs';
 
 const API_URL = process.env.PALVERON_API_URL || process.env.AGENT_SHIELD_API_URL || 'https://gateway.palveron.com';
 const API_KEY = process.env.PALVERON_API_KEY || process.env.AGENT_SHIELD_API_KEY || '';
+const SMOKE_PROJECT = process.env.PALVERON_SMOKE_PROJECT || '';
 
 let hardFailures = 0;
 const line = (s = '') => console.log(s);
@@ -43,28 +44,29 @@ function check(name, ok, detail, { hard = true } = {}) {
 
 // ── Guards ───────────────────────────────────────────────────────────
 if (!API_KEY) {
-  console.error('Missing PALVERON_API_KEY. Set a TEST project key (pv_test_…).');
+  console.error(
+    'Missing PALVERON_API_KEY. Set the pv_live_ key of a dedicated throwaway\n' +
+      'project (see .env.smoke.example).',
+  );
   process.exit(2);
 }
 
-// A pv_test_ key runs as before. Any other key (e.g. pv_live_) runs ONLY with a
-// conscious override for a dedicated throwaway project — never the core key.
-if (!API_KEY.startsWith('pv_test_')) {
-  if (process.env.SMOKE_I_UNDERSTAND !== 'throwaway-project') {
-    console.error(
-      'Refusing to run: PALVERON_API_KEY does not start with "pv_test_".\n' +
-        'This smoke calls init (writes policies + an agent), so a non-test key is only\n' +
-        'allowed against a DEDICATED THROWAWAY project — NEVER the production core key.\n' +
-        'To override, set SMOKE_I_UNDERSTAND="throwaway-project" (and be certain the key\n' +
-        'belongs to a disposable project).',
-    );
-    process.exit(2);
-  }
-  console.warn('⚠️  running against a pv_live_ key — throwaway project only');
+// No test/sandbox key exists — every Palveron key is a live key. Isolation
+// comes from running against a DEDICATED, DISPOSABLE project, not from a key
+// prefix. Require the runner to name that project so the choice is conscious:
+// this smoke calls init, which WRITES policies + an agent into it.
+if (!SMOKE_PROJECT) {
+  console.error(
+    'Missing PALVERON_SMOKE_PROJECT. Name the dedicated throwaway project this key\n' +
+      'belongs to (e.g. "agent-shield-smoke-throwaway"; see .env.smoke.example).\n' +
+      'This smoke runs init and WRITES policies + an agent — it must target a\n' +
+      'disposable project, NEVER a production project.',
+  );
+  process.exit(2);
 }
 
 line('');
-line(`🛡️  agent-shield live smoke → ${API_URL}`);
+line(`🛡️  agent-shield live smoke → ${API_URL} (throwaway project: ${SMOKE_PROJECT})`);
 line('');
 
 const client = new ShieldClient({ apiUrl: API_URL, apiKey: API_KEY, maxRetries: 1 });
@@ -73,7 +75,7 @@ const client = new ShieldClient({ apiUrl: API_URL, apiKey: API_KEY, maxRetries: 
 const downClient = new ShieldClient({ apiUrl: 'http://127.0.0.1:9', apiKey: API_KEY, maxRetries: 0, timeout: 800 });
 
 // A client with a deliberately invalid key, to prove fail-LOUD (no silent ALLOW).
-const badKeyClient = new ShieldClient({ apiUrl: API_URL, apiKey: 'pv_test_definitely_invalid_key', maxRetries: 0 });
+const badKeyClient = new ShieldClient({ apiUrl: API_URL, apiKey: 'pv_live_definitely_invalid_key', maxRetries: 0 });
 
 try {
   // 1. Health preflight (proves the /health path, B2) ──────────────────

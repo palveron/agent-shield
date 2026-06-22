@@ -221,6 +221,36 @@ BYOM model keys are configured in the dashboard (**Settings → Neural Gateway**
 
 ---
 
+## Live smoke (`scripts/smoke-live.mjs`)
+
+An end-to-end smoke that runs the eight launch checks against a real gateway. It
+is **not** shipped in the npm package.
+
+> ⚠️ **Run it only against a dedicated, disposable project.** Check #8 (`init` /
+> `setupShield`) **writes policies and an agent** into the project. There is no
+> test or sandbox key today — every Palveron key is a live `pv_live_` key, so
+> isolation comes from targeting a **separate throwaway project**, not from a key
+> prefix.
+
+Setup:
+
+1. Create a dedicated throwaway project in the dashboard (e.g. named
+   `agent-shield-smoke-throwaway`).
+2. `cp .env.smoke.example .env.smoke` and fill in that project's `pv_live_` key
+   and name. `.env.smoke` is gitignored.
+3. Run it:
+
+   ```bash
+   node --env-file=.env.smoke scripts/smoke-live.mjs
+   ```
+
+The script refuses to run unless both `PALVERON_API_KEY` and
+`PALVERON_SMOKE_PROJECT` are set — naming the throwaway project is the conscious
+confirmation that you are pointing at a disposable target. Exit code `0` means
+all hard checks passed.
+
+---
+
 ## Tiers
 
 | | Community | Pro | Business | Enterprise |

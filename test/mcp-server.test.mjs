@@ -39,7 +39,7 @@ function startMockGateway() {
 function driveMcp(baseUrl, requests) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [BIN], {
-      env: { ...process.env, PALVERON_API_URL: baseUrl, PALVERON_API_KEY: 'pv_test_x' },
+      env: { ...process.env, PALVERON_API_URL: baseUrl, PALVERON_API_KEY: 'pv_live_x' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let out = '';

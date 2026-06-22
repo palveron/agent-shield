@@ -75,7 +75,7 @@ test('failClosedOverride parses truthy/falsey correctly', () => {
 
 test('HIGH-risk transport failure (5xx) → fail-CLOSED BLOCK, never silent ALLOW', async () => {
   const result = await withServer(500, { error: 'boom' }, async (baseUrl) => {
-    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0, timeout: 400 });
+    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0, timeout: 400 });
     return client.verify({ agentId: 'a', toolName: 'exec', input: 'rm -rf /' });
   });
   assert.equal(result.decision, 'BLOCK', 'a dangerous tool during our outage MUST be blocked');
@@ -85,7 +85,7 @@ test('HIGH-risk transport failure (5xx) → fail-CLOSED BLOCK, never silent ALLO
 
 test('MEDIUM-risk transport failure (5xx) → fail-OPEN ALLOW', async () => {
   const result = await withServer(500, { error: 'boom' }, async (baseUrl) => {
-    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0, timeout: 400 });
+    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0, timeout: 400 });
     return client.verify({ agentId: 'a', toolName: 'read_file', input: 'cat config' });
   });
   assert.equal(result.decision, 'ALLOW');
@@ -94,7 +94,7 @@ test('MEDIUM-risk transport failure (5xx) → fail-OPEN ALLOW', async () => {
 
 test('validation error (HTTP 400) → FAIL-LOUD: throws, does NOT return ALLOW', async () => {
   await withServer(400, { error: 'missing field prompt', field: 'prompt' }, async (baseUrl) => {
-    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0 });
+    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
     await assert.rejects(
       () => client.verify({ agentId: 'a', toolName: 'exec', input: 'x' }),
       (err) => {
@@ -108,7 +108,7 @@ test('validation error (HTTP 400) → FAIL-LOUD: throws, does NOT return ALLOW',
 
 test('auth error (HTTP 401) → FAIL-LOUD: throws, does NOT return ALLOW', async () => {
   await withServer(401, { error: 'bad key' }, async (baseUrl) => {
-    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0 });
+    const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
     await assert.rejects(
       () => client.verify({ agentId: 'a', toolName: 'exec', input: 'x' }),
       (err) => {
@@ -132,7 +132,7 @@ test('rate-limit (HTTP 429) on HIGH risk → tiered fail-closed BLOCK with retry
   try {
     const client = new ShieldClient({
       apiUrl: `http://127.0.0.1:${port}`,
-      apiKey: 'pv_test_x',
+      apiKey: 'pv_live_x',
       maxRetries: 0,
       timeout: 400,
     });
@@ -150,7 +150,7 @@ test('override AGENT_SHIELD_FAIL_CLOSED=true: MEDIUM-risk transport failure → 
   process.env.AGENT_SHIELD_FAIL_CLOSED = 'true';
   try {
     const result = await withServer(500, { error: 'boom' }, async (baseUrl) => {
-      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0, timeout: 400 });
+      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0, timeout: 400 });
       return client.verify({ agentId: 'a', toolName: 'read_file', input: 'x' });
     });
     assert.equal(result.decision, 'BLOCK');

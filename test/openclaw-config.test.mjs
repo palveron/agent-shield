@@ -28,7 +28,7 @@ test('writes agent-shield into ~/.openclaw/openclaw.json and preserves foreign e
     );
 
     const updated = await updateOpenClawConfig(
-      { apiUrl: 'https://gateway.palveron.com', apiKey: 'pv_test_x' },
+      { apiUrl: 'https://gateway.palveron.com', apiKey: 'pv_live_x' },
       { home, cwd: emptyCwd },
     );
 
@@ -43,7 +43,7 @@ test('writes agent-shield into ~/.openclaw/openclaw.json and preserves foreign e
     assert.equal(entry.command, 'npx');
     assert.deepEqual(entry.args, EXPECTED_ARGS);
     assert.equal(entry.env.PALVERON_API_URL, 'https://gateway.palveron.com');
-    assert.equal(entry.env.PALVERON_API_KEY, 'pv_test_x');
+    assert.equal(entry.env.PALVERON_API_KEY, 'pv_live_x');
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(emptyCwd, { recursive: true, force: true });

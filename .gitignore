@@ -2,3 +2,7 @@ node_modules/
 package-lock.json
 *.tgz
 .DS_Store
+
+# Live-smoke config — holds a real pv_live_ key. Never commit.
+.env.smoke
+.env

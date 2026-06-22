@@ -29,7 +29,7 @@ async function quiet(fn) {
 }
 
 test('F5: unknown decision on a HIGH-risk tool → fail-closed BLOCK, flagged anomaly (never ALLOW)', async () => {
-  const client = new ShieldClient({ apiUrl: 'http://x', apiKey: 'pv_test_x', sdk: fakeSdk('WAT') });
+  const client = new ShieldClient({ apiUrl: 'http://x', apiKey: 'pv_live_x', sdk: fakeSdk('WAT') });
   const r = await quiet(() => client.verify({ agentId: 'a', toolName: 'exec', input: 'rm -rf /' }));
   assert.equal(r.decision, 'BLOCK');
   assert.equal(r.reason, 'unknown_decision_failclosed');
@@ -38,7 +38,7 @@ test('F5: unknown decision on a HIGH-risk tool → fail-closed BLOCK, flagged an
 });
 
 test('F5: unknown decision on a MEDIUM-risk tool → ALLOW but flagged anomaly', async () => {
-  const client = new ShieldClient({ apiUrl: 'http://x', apiKey: 'pv_test_x', sdk: fakeSdk('WAT') });
+  const client = new ShieldClient({ apiUrl: 'http://x', apiKey: 'pv_live_x', sdk: fakeSdk('WAT') });
   const r = await quiet(() => client.verify({ agentId: 'a', toolName: 'read_file', input: 'x' }));
   assert.equal(r.decision, 'ALLOW');
   assert.equal(r.reason, 'unknown_decision');
@@ -47,7 +47,7 @@ test('F5: unknown decision on a MEDIUM-risk tool → ALLOW but flagged anomaly',
 });
 
 test('F5: known decisions still pass through normally (no anomaly)', async () => {
-  const client = new ShieldClient({ apiUrl: 'http://x', apiKey: 'pv_test_x', sdk: fakeSdk('PASSED') });
+  const client = new ShieldClient({ apiUrl: 'http://x', apiKey: 'pv_live_x', sdk: fakeSdk('PASSED') });
   const r = await client.verify({ agentId: 'a', toolName: 'exec', input: 'echo hi' });
   assert.equal(r.decision, 'ALLOW');
   assert.equal(r._anomaly, undefined);

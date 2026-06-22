@@ -75,7 +75,7 @@ export class ShieldClient {
   /**
    * @param {object} options
    * @param {string} options.apiUrl  - Base URL of the governance gateway.
-   * @param {string} options.apiKey  - Project API key (pv_live_* / pv_test_*).
+   * @param {string} options.apiKey  - Project API key (pv_live_*).
    * @param {number} [options.timeout]    - Per-request timeout in ms (default 5000).
    * @param {number} [options.maxRetries] - SDK retry attempts (default: SDK default).
    * @param {import('@palveron/sdk').Palveron} [options.sdk] - Inject a pre-built

@@ -47,7 +47,7 @@ test('verify body matches the gateway contract: prompt top-level, context.tool_n
   const { captured, result } = await withCapturingServer(
     () => ({ status: 200, json: { decision: 'PASSED', trace_id: 't_ok', reason: 'clean' } }),
     async (baseUrl) => {
-      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0 });
+      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
       return client.verify({ agentId: 'agent-7', toolName: 'exec', input: 'rm -rf /tmp/build' });
     },
   );
@@ -60,7 +60,7 @@ test('verify body matches the gateway contract: prompt top-level, context.tool_n
   assert.equal(captured.body.metadata.source, 'agent-shield');
   assert.equal(captured.body.metadata.risk_level, 'HIGH');
   // SDK uses Bearer auth.
-  assert.match(captured.headers.authorization ?? '', /^Bearer pv_test_x$/);
+  assert.match(captured.headers.authorization ?? '', /^Bearer pv_live_x$/);
 
   // A clean PASSED is normalized to the agent-facing ALLOW.
   assert.equal(result.decision, 'ALLOW');
@@ -72,7 +72,7 @@ test('a real BLOCKED verdict (HTTP 403 + body) surfaces as BLOCK, not an error o
   const { result } = await withCapturingServer(
     () => ({ status: 403, json: { decision: 'BLOCKED', reason: 'secret_exfiltration', trace_id: 't_blk' } }),
     async (baseUrl) => {
-      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0 });
+      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
       return client.verify({ agentId: 'a', toolName: 'exec', input: 'echo AKIAIOSFODNN7EXAMPLE' });
     },
   );
@@ -87,7 +87,7 @@ test('a MODIFIED verdict surfaces as MODIFY with the sanitized output', async ()
   const { result } = await withCapturingServer(
     () => ({ status: 200, json: { decision: 'MODIFIED', output: 'masked', reason: 'pii_masked' } }),
     async (baseUrl) => {
-      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_test_x', maxRetries: 0 });
+      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
       return client.verify({ agentId: 'a', toolName: 'send_message', input: 'email me@x.com' });
     },
   );
