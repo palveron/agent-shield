@@ -179,6 +179,33 @@ agent-shield --help    # Show all commands
 
 ---
 
+## Troubleshooting — spawn diagnostics
+
+When agent-shield runs **as a spawned MCP subprocess** (OpenClaw, Cursor, Claude
+Code, …), the host swallows its stderr, so a normal log is invisible. For cases
+where a governed call behaves differently under the host than when invoked
+directly, set `AGENT_SHIELD_DEBUG_LOG_PATH` to a file path and agent-shield
+appends an ordered, append-only JSONL event log (process start + env snapshot,
+each MCP message, every gateway call with its outcome, circuit-breaker
+transitions, and the fail-closed branch):
+
+```bash
+AGENT_SHIELD_DEBUG_LOG_PATH=./.debug/spawn.jsonl node bin/agent-shield-mcp.mjs
+```
+
+- **Off by default** — unset means zero file IO and no behavioral difference.
+- **Never affects governance** — diagnostics can't throw; on any IO error they
+  go silent. Correctness beats diagnosis.
+- **Secret-safe** — the API key appears only as length/presence, tool-call
+  arguments are never logged (only their key names + byte size), and proxy URLs
+  are reduced to `host:port`.
+
+Add the same env var to the host's MCP registration to capture a real spawn run,
+then compare it against a direct run pointed at the same log file. The `.debug/`
+folder is gitignored.
+
+---
+
 ## Architecture
 
 agent-shield is a **thin client**. It contains:

@@ -20,6 +20,30 @@
 import { Palveron } from '@palveron/sdk';
 import { classifyRisk } from './risk-classifier.mjs';
 import { isFailLoud, transportFallback } from './fail-policy.mjs';
+import { dlog } from './debug-log.mjs';
+
+/**
+ * Classify a thrown SDK error into a diagnostic `outcome` for the spawn log.
+ * Logging-only — does NOT influence the fail policy (which keys off isFailLoud /
+ * the typed errors directly). Distinguishing `breaker_open_shortcircuit` (no
+ * network attempt) from a real `transport_error`/`timeout` is what decides
+ * H1 vs H2/H3 in the Fund-#5 diagnosis.
+ * @param {unknown} err
+ * @returns {'breaker_open_shortcircuit'|'timeout'|'http_error'|'transport_error'}
+ */
+function classifyErrorOutcome(err) {
+  switch (err?.name) {
+    case 'PalveronCircuitOpenError':
+      return 'breaker_open_shortcircuit';
+    case 'PalveronTimeoutError':
+      return 'timeout';
+    case 'PalveronValidationError':
+    case 'PalveronAuthenticationError':
+      return 'http_error';
+    default:
+      return 'transport_error';
+  }
+}
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const SHIELD_REQUEST_TIMEOUT_MS = 10000;
@@ -102,6 +126,7 @@ export class ShieldClient {
   #sdk;
   #apiUrl;
   #apiKey;
+  #timeoutMs;
 
   /**
    * @param {object} options
@@ -118,6 +143,7 @@ export class ShieldClient {
 
     this.#apiUrl = apiUrl.replace(/\/+$/, '');
     this.#apiKey = apiKey;
+    this.#timeoutMs = timeout; // retained for diagnostics only (timeout outcome logging)
     // Note: there is intentionally NO BYOM LLM-key forwarding. The gateway
     // reads the BYOM provider key from the project record (Project.openaiKey,
     // configured in the dashboard → Settings → Neural Gateway). Forwarding a
@@ -138,6 +164,38 @@ export class ShieldClient {
   }
 
   /**
+   * Read the SDK circuit state without ever throwing (diagnostics only).
+   * The breaker is SDK-internal (threshold 5 / cooldown 30s); the only thing
+   * agent-shield can observe is its state via diagnostics() + the
+   * PalveronCircuitOpenError thrown on a short-circuited call.
+   * @returns {string}
+   */
+  #circuitStateSafe() {
+    try {
+      return this.#sdk.diagnostics().circuitState;
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Emit a `breaker` event when the observed SDK circuit state changed across a
+   * call (e.g. closed→open when this call tripped it, or open→half-open after
+   * cooldown). `observed` carries the call result for context. Returns the new
+   * state. Diagnostics only — does not touch breaker behaviour.
+   * @param {string} before
+   * @param {string} observed
+   * @returns {string}
+   */
+  #emitBreakerDelta(before, observed) {
+    const after = this.#circuitStateSafe();
+    if (after !== before) {
+      dlog('breaker', { from: before, to: after, observed });
+    }
+    return after;
+  }
+
+  /**
    * Verify a tool call / action before execution. Every HIGH-RISK tool call
    * goes through here. Applies the tiered fail policy (B3): a genuine block
    * surfaces as BLOCK; a contract/auth failure THROWS (fail-loud); a transport
@@ -153,6 +211,16 @@ export class ShieldClient {
   async verify({ agentId, toolName, input, metadata = {} }) {
     const riskLevel = toolName ? classifyRisk(toolName) : 'MEDIUM';
 
+    // ── Diagnostics (no-op unless AGENT_SHIELD_DEBUG_LOG_PATH set) ──
+    // `attempt: 0` is the agent-shield-level call; the SDK does its own internal
+    // retries which are not separately visible here. The breaker state captured
+    // BEFORE the call is what distinguishes H1 (open → short-circuit, no network)
+    // from a fresh transport failure.
+    const verifyUrl = `${this.#apiUrl}/api/v1/verify`;
+    const breakerBefore = this.#circuitStateSafe();
+    const startedAt = Date.now();
+    dlog('gateway_call_start', { kind: 'verify', url: verifyUrl, attempt: 0, breakerState: breakerBefore });
+
     try {
       const res = await this.#sdk.verify({
         prompt: input ?? '',
@@ -165,13 +233,26 @@ export class ShieldClient {
         },
       });
 
+      this.#emitBreakerDelta(breakerBefore, 'http_ok');
+      dlog('gateway_call_end', {
+        kind: 'verify',
+        url: verifyUrl,
+        attempt: 0,
+        outcome: 'http_ok',
+        httpStatus: res.decision === 'RATE_LIMITED' ? 429 : 200,
+        decision: res.decision ?? null,
+        elapsedMs: Date.now() - startedAt,
+      });
+
       // 429 is surfaced by the SDK as decision RATE_LIMITED (not an exception)
       // on the governed verify path. Treat it as a transport failure, tiered.
       if (res.decision === 'RATE_LIMITED') {
-        return transportFallback(riskLevel, {
+        const fb = transportFallback(riskLevel, {
           errorMessage: 'rate_limited',
           retryAfterMs: res.retryAfterMs,
         });
+        dlog('failclosed_emit', { reason: fb.reason, decision: fb.decision, branch: 'rate_limited', riskLevel });
+        return fb;
       }
 
       // F5: an unrecognized verdict (e.g. a future, stricter decision) must not
@@ -216,19 +297,62 @@ export class ShieldClient {
         findings: res.findings || [],
       };
     } catch (err) {
+      const outcome = classifyErrorOutcome(err);
+      this.#emitBreakerDelta(breakerBefore, err?.name || 'error');
+      dlog('gateway_call_end', {
+        kind: 'verify',
+        url: verifyUrl,
+        attempt: 0,
+        outcome,
+        errName: err?.name ?? null,
+        errCode: err?.code ?? null,
+        errMessage: String(err?.message ?? '').slice(0, 200),
+        ...(outcome === 'timeout' ? { timeoutMs: this.#timeoutMs } : {}),
+        elapsedMs: Date.now() - startedAt,
+      });
+
       // FAIL-LOUD: a 400 (broken request body) or 401 (bad key) is our bug or a
       // misconfiguration. Re-throw — never swallow into ALLOW. This is exactly
       // the failure class the old silent fail-open hid.
       if (isFailLoud(err)) throw err;
 
       // Transport failure (timeout / circuit-open / network / 5xx) → tiered.
-      return transportFallback(riskLevel, { errorMessage: err?.message });
+      const fb = transportFallback(riskLevel, { errorMessage: err?.message });
+      // failclosed_emit closes the causal chain: this branch is what produced
+      // gateway_unavailable_failclosed (when fb.decision === 'BLOCK'). `branch`
+      // names the outcome that caused it — breaker_open_shortcircuit (H1) vs a
+      // real transport_error/timeout (H2/H3).
+      dlog('failclosed_emit', { reason: fb.reason, decision: fb.decision, branch: outcome, riskLevel, errName: err?.name ?? null });
+      return fb;
     }
   }
 
   /** Gateway health (hits the real `/health`, via the SDK). */
   async health() {
-    return this.#sdk.health();
+    const healthUrl = `${this.#apiUrl}/health`;
+    const breakerBefore = this.#circuitStateSafe();
+    const startedAt = Date.now();
+    dlog('gateway_call_start', { kind: 'health', url: healthUrl, attempt: 0, breakerState: breakerBefore });
+    try {
+      const res = await this.#sdk.health();
+      this.#emitBreakerDelta(breakerBefore, 'http_ok');
+      dlog('gateway_call_end', { kind: 'health', url: healthUrl, attempt: 0, outcome: 'http_ok', elapsedMs: Date.now() - startedAt });
+      return res;
+    } catch (err) {
+      const outcome = classifyErrorOutcome(err);
+      this.#emitBreakerDelta(breakerBefore, err?.name || 'error');
+      dlog('gateway_call_end', {
+        kind: 'health',
+        url: healthUrl,
+        attempt: 0,
+        outcome,
+        errName: err?.name ?? null,
+        errCode: err?.code ?? null,
+        errMessage: String(err?.message ?? '').slice(0, 200),
+        elapsedMs: Date.now() - startedAt,
+      });
+      throw err;
+    }
   }
 
   /** List active policies (via the SDK). */

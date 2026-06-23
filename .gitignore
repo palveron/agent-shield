@@ -6,3 +6,7 @@ package-lock.json
 # Live-smoke config — holds a real pv_live_ key. Never commit.
 .env.smoke
 .env
+
+# Spawn-diagnostics output (AGENT_SHIELD_DEBUG_LOG_PATH). Sanitized, but may
+# carry gateway URLs / agent ids — never commit.
+.debug/

@@ -12,6 +12,7 @@
 import { ShieldClient } from './client.mjs';
 import { classifyRisk } from './risk-classifier.mjs';
 import { createStdioTransport } from './stdio-transport.mjs';
+import { dlog } from './debug-log.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 
@@ -55,6 +56,27 @@ export async function startMcpServer() {
 
 async function handleMessage(message, client, agentId, transport) {
   const { id, method, params } = message;
+
+  // mcp_msg — proves the in-process call ORDER (probe/list before the failing
+  // tools/call?) and, via pid+seq adjacency, correlates each gateway call to the
+  // MCP message that triggered it. Decides H1/H5. Secret-safe: for tools/call we
+  // log only the tool name + argument KEY NAMES + byte size, never the argument
+  // values (PII risk).
+  {
+    const ev = { method, ...(id !== undefined ? { id } : {}) };
+    if (method === 'tools/call') {
+      const args = params?.arguments;
+      ev.mcpToolName = params?.name ?? null;
+      ev.toolName = typeof args?.tool_name === 'string' ? args.tool_name : null;
+      ev.argKeys = args && typeof args === 'object' ? Object.keys(args) : [];
+      try {
+        ev.argBytes = args !== undefined ? Buffer.byteLength(JSON.stringify(args)) : 0;
+      } catch {
+        ev.argBytes = -1;
+      }
+    }
+    dlog('mcp_msg', ev);
+  }
 
   switch (method) {
     case 'initialize':
