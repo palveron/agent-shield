@@ -11,6 +11,7 @@
 
 import { ShieldClient } from './client.mjs';
 import { classifyRisk } from './risk-classifier.mjs';
+import { createStdioTransport } from './stdio-transport.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 
@@ -40,50 +41,24 @@ export async function startMcpServer() {
 
   const agentId = process.env.AGENT_SHIELD_AGENT_ID || 'default';
 
-  // JSON-RPC over stdio
-  let buffer = '';
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (chunk) => {
-    buffer += chunk;
-    processBuffer();
+  // JSON-RPC over stdio — NDJSON (MCP standard) with Content-Length tolerance.
+  // The transport detects the input framing and mirrors it on responses.
+  const transport = createStdioTransport({
+    onMessage: (msg) => handleMessage(msg, client, agentId, transport),
+    write: (s) => process.stdout.write(s),
+    onParseError: () => writeError('Failed to parse JSON-RPC message'),
   });
 
-  function processBuffer() {
-    // MCP uses Content-Length framing
-    while (true) {
-      const headerEnd = buffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) break;
-
-      const header = buffer.slice(0, headerEnd);
-      const match = header.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        buffer = buffer.slice(headerEnd + 4);
-        continue;
-      }
-
-      const contentLength = parseInt(match[1], 10);
-      const bodyStart = headerEnd + 4;
-      if (buffer.length < bodyStart + contentLength) break;
-
-      const body = buffer.slice(bodyStart, bodyStart + contentLength);
-      buffer = buffer.slice(bodyStart + contentLength);
-
-      try {
-        const message = JSON.parse(body);
-        handleMessage(message, client, agentId);
-      } catch {
-        writeError('Failed to parse JSON-RPC message');
-      }
-    }
-  }
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => transport.push(chunk));
 }
 
-async function handleMessage(message, client, agentId) {
+async function handleMessage(message, client, agentId, transport) {
   const { id, method, params } = message;
 
   switch (method) {
     case 'initialize':
-      sendResponse(id, {
+      sendResponse(transport, id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: {
@@ -98,7 +73,7 @@ async function handleMessage(message, client, agentId) {
       break;
 
     case 'tools/list':
-      sendResponse(id, {
+      sendResponse(transport, id, {
         tools: [
           {
             name: 'governance_check',
@@ -134,22 +109,22 @@ async function handleMessage(message, client, agentId) {
       break;
 
     case 'tools/call':
-      await handleToolCall(id, params, client, agentId);
+      await handleToolCall(id, params, client, agentId, transport);
       break;
 
     default:
       // Unknown method — respond with method not found
       if (id !== undefined) {
-        sendError(id, -32601, `Method not found: ${method}`);
+        sendError(transport, id, -32601, `Method not found: ${method}`);
       }
   }
 }
 
-async function handleToolCall(id, params, client, agentId) {
+async function handleToolCall(id, params, client, agentId, transport) {
   const { name, arguments: args } = params || {};
 
   if (name !== 'governance_check') {
-    sendError(id, -32602, `Unknown tool: ${name}`);
+    sendError(transport, id, -32602, `Unknown tool: ${name}`);
     return;
   }
 
@@ -161,7 +136,7 @@ async function handleToolCall(id, params, client, agentId) {
   // bypass the gateway, and without tool_name the risk level isn't even
   // knowable. Surface ERROR (SKILL.md handles it without proceeding on HIGH-RISK).
   if (!toolName || !input) {
-    sendResponse(id, {
+    sendResponse(transport, id, {
       content: [
         {
           type: 'text',
@@ -193,7 +168,7 @@ async function handleToolCall(id, params, client, agentId) {
       },
     });
 
-    sendResponse(id, {
+    sendResponse(transport, id, {
       content: [
         {
           type: 'text',
@@ -214,7 +189,7 @@ async function handleToolCall(id, params, client, agentId) {
     // launch-blocking governance gap. Surface an explicit ERROR so the agent
     // (per SKILL.md) treats high-risk actions with caution instead of
     // proceeding silently.
-    sendResponse(id, {
+    sendResponse(transport, id, {
       content: [
         {
           type: 'text',
@@ -230,24 +205,12 @@ async function handleToolCall(id, params, client, agentId) {
   }
 }
 
-function sendResponse(id, result) {
-  const response = JSON.stringify({
-    jsonrpc: '2.0',
-    id,
-    result,
-  });
-  const header = `Content-Length: ${Buffer.byteLength(response)}\r\n\r\n`;
-  process.stdout.write(header + response);
+function sendResponse(transport, id, result) {
+  transport.send({ jsonrpc: '2.0', id, result });
 }
 
-function sendError(id, code, message) {
-  const response = JSON.stringify({
-    jsonrpc: '2.0',
-    id,
-    error: { code, message },
-  });
-  const header = `Content-Length: ${Buffer.byteLength(response)}\r\n\r\n`;
-  process.stdout.write(header + response);
+function sendError(transport, id, code, message) {
+  transport.send({ jsonrpc: '2.0', id, error: { code, message } });
 }
 
 function writeError(msg) {
