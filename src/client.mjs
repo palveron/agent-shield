@@ -40,17 +40,48 @@ export const KNOWN_SDK_DECISIONS = new Set([
   'ALLOWED',
   'FLAGGED',
   'POLICY_CHANGE',
-  'BLOCKED',
   'MODIFIED',
+  'ANONYMIZED',
+  'REDACTED',
+  'BLOCKED',
   'PENDING_APPROVAL',
   'RATE_LIMITED',
 ]);
+
+/**
+ * Decisions where the gateway proceeds but returns a masked/pseudonymized
+ * payload the agent must use instead of its original input. All three map to
+ * agent-facing MODIFY and carry the replacement text in `res.output`:
+ *   • MODIFIED   — Entity-Gate modification
+ *   • ANONYMIZED — PII pseudonymized (reversible, PBEG token vault)
+ *   • REDACTED   — credential irreversibly removed
+ * The gateway sends exactly ONE of ANONYMIZED/REDACTED (verify_pipeline.rs:391
+ * "credential dominates: REDACTED wins over ANONYMIZED"), so they are distinct
+ * verdicts, not one with a flag.
+ */
+export const MASKING_DECISIONS = new Set(['MODIFIED', 'ANONYMIZED', 'REDACTED']);
+
+/**
+ * Human-readable `reason` fallbacks used ONLY when the gateway supplies none.
+ * A real gateway `reason` always wins — these never overwrite it. They make the
+ * reversible-vs-irreversible compliance nuance legible at the agent/trace level.
+ */
+const MASKING_REASON_DEFAULTS = {
+  ANONYMIZED: 'PII pseudonymized (reversible) — use the masked modified_input',
+  REDACTED: 'Credential removed (irreversible) — use the masked modified_input',
+};
 
 export function normalizeDecision(sdkDecision) {
   switch (sdkDecision) {
     case 'BLOCKED':
       return 'BLOCK';
     case 'MODIFIED':
+    // ANONYMIZED/REDACTED unify with MODIFIED as agent-facing MODIFY: the agent
+    // proceeds with the masked `modified_input`, identical to the Gateway-Proxy
+    // (proxy.rs:351) and LangChain paths. The compliance nuance lives in
+    // `sdk_decision` + `reason`, not in a fifth agent action.
+    case 'ANONYMIZED':
+    case 'REDACTED':
       return 'MODIFY';
     case 'PENDING_APPROVAL':
       return 'APPROVAL';
@@ -171,9 +202,16 @@ export class ShieldClient {
 
       return {
         decision: normalizeDecision(res.decision),
+        // Preserve the exact gateway verdict so the dashboard/trace match the
+        // engine decision (ANONYMIZED vs REDACTED stays visible downstream).
         sdk_decision: res.decision,
-        reason: res.reason || null,
-        modified_input: res.decision === 'MODIFIED' ? res.output || null : null,
+        // Gateway reason wins; fall back to a nuance-preserving default only for
+        // masking verdicts that arrived without one.
+        reason: res.reason || MASKING_REASON_DEFAULTS[res.decision] || null,
+        // Every masking verdict (MODIFIED/ANONYMIZED/REDACTED) carries its
+        // replacement text in `res.output` — pass it through so MODIFY is never
+        // returned without the substitute the agent must use.
+        modified_input: MASKING_DECISIONS.has(res.decision) ? res.output || null : null,
         trace_id: res.traceId || null,
         findings: res.findings || [],
       };

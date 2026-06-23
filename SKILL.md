@@ -11,7 +11,7 @@ agent-shield records everything your OpenClaw agent does, and asks you — the a
 Before executing any HIGH-RISK tool call, call `governance_check`. It returns one of:
 - **ALLOW** — proceed normally
 - **BLOCK** — do NOT execute. Tell the user why.
-- **MODIFY** — use the sanitized version instead
+- **MODIFY** — use the sanitized version instead. This also covers masked or pseudonymized content (PII anonymized, credentials redacted): the action proceeds, but you MUST use `modified_input` rather than your original input.
 - **APPROVAL** — a human must approve first. Do NOT execute; tell the user approval is required.
 - **ERROR** — the check could not complete (misconfig / contract error). Do NOT silently proceed on HIGH-RISK; warn the user.
 

@@ -94,3 +94,54 @@ test('a MODIFIED verdict surfaces as MODIFY with the sanitized output', async ()
   assert.equal(result.decision, 'MODIFY');
   assert.equal(result.modified_input, 'masked');
 });
+
+test('an ANONYMIZED verdict (HTTP 200 + output) → MODIFY, masked output, sdk_decision preserved, gateway reason wins, no anomaly', async () => {
+  const { result } = await withCapturingServer(
+    () => ({ status: 200, json: { decision: 'ANONYMIZED', output: 'Newsletter draft to [EMAIL]', reason: 'pii_tokenized', trace_id: 't_anon' } }),
+    async (baseUrl) => {
+      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
+      return client.verify({ agentId: 'a', toolName: 'send_email', input: 'Newsletter draft to test@example.com' });
+    },
+  );
+  assert.equal(result.decision, 'MODIFY', 'ANONYMIZED proceeds with the masked text, not BLOCK');
+  assert.equal(result.modified_input, 'Newsletter draft to [EMAIL]', 'masked output must reach the agent');
+  assert.equal(result.sdk_decision, 'ANONYMIZED', 'the engine verdict stays visible for the trace');
+  assert.equal(result.reason, 'pii_tokenized', 'a real gateway reason must not be overwritten');
+  assert.equal(result._anomaly, undefined, 'a known verdict must not be flagged as an anomaly');
+  assert.equal(result.trace_id, 't_anon');
+});
+
+test('a REDACTED verdict (HTTP 200 + output, no reason) → MODIFY, masked output, sdk_decision preserved, irreversible-nuance reason', async () => {
+  const { result } = await withCapturingServer(
+    () => ({ status: 200, json: { decision: 'REDACTED', output: 'curl -H "Authorization: Bearer [REDACTED]"' } }),
+    async (baseUrl) => {
+      const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
+      return client.verify({ agentId: 'a', toolName: 'exec', input: 'curl -H "Authorization: Bearer sk-secret"' });
+    },
+  );
+  assert.equal(result.decision, 'MODIFY', 'REDACTED proceeds with the masked text, not BLOCK');
+  assert.equal(result.modified_input, 'curl -H "Authorization: Bearer [REDACTED]"');
+  assert.equal(result.sdk_decision, 'REDACTED');
+  assert.match(result.reason, /irreversible/i, 'fallback reason must convey credential removal is irreversible');
+  assert.equal(result._anomaly, undefined);
+});
+
+test('F5 intact: a genuinely unknown future verdict on a HIGH-risk tool still fails closed (BLOCK + anomaly)', async () => {
+  const origWarn = console.warn;
+  console.warn = () => {}; // F5 warns to stderr by design
+  try {
+    const { result } = await withCapturingServer(
+      () => ({ status: 200, json: { decision: 'FUTURE_VERDICT', trace_id: 't_future' } }),
+      async (baseUrl) => {
+        const client = new ShieldClient({ apiUrl: baseUrl, apiKey: 'pv_live_x', maxRetries: 0 });
+        return client.verify({ agentId: 'a', toolName: 'exec', input: 'rm -rf /' });
+      },
+    );
+    assert.equal(result.decision, 'BLOCK', 'unknown HIGH-risk verdict must fail closed');
+    assert.equal(result.reason, 'unknown_decision_failclosed');
+    assert.equal(result._anomaly, true);
+    assert.equal(result.sdk_decision, 'FUTURE_VERDICT');
+  } finally {
+    console.warn = origWarn;
+  }
+});
