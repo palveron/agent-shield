@@ -34,6 +34,12 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getServers } from 'node:dns';
 import { lookup } from 'node:dns/promises';
+import { truncate, causeChain } from './error-cause.mjs';
+
+// Re-exported so existing importers (and the diagnostic path) keep one source of
+// truth for cause resolution; the implementation lives in error-cause.mjs so it
+// is usable on the live governance path too (not tied to the debug facility).
+export { causeChain };
 
 const LOG_PATH = (process.env.AGENT_SHIELD_DEBUG_LOG_PATH ?? '').trim();
 const ENABLED = LOG_PATH.length > 0;
@@ -81,12 +87,6 @@ export function dlog(event, fields = {}) {
   } catch {
     // Swallow: a diagnostics IO error must never reach the governance path.
   }
-}
-
-/** Truncate a string to `n` chars (secret-safe diagnostics never log full bodies). */
-function truncate(s, n) {
-  const str = String(s ?? '');
-  return str.length > n ? str.slice(0, n) : str;
 }
 
 /**
@@ -142,37 +142,6 @@ export function collectProxyEnv(env = process.env) {
     }
   }
   return out;
-}
-
-/**
- * Resolve a thrown error's `cause` chain into a flat, secret-safe array. Node /
- * undici stash the REAL transport reason (ENOTFOUND, ECONNREFUSED,
- * UND_ERR_CONNECT_TIMEOUT, EPERM, CERT_*) in `err.cause` — the SDK masks the
- * surface as a generic NETWORK_ERROR, so this is how the real reason surfaces.
- * @param {unknown} err
- * @param {number} [maxDepth]
- * @returns {Array<{name:?string,code:?string,errno:?number,syscall:?string,address:?string,port:?(number|string),message:string}>}
- */
-export function causeChain(err, maxDepth = 5) {
-  const chain = [];
-  let cur = err?.cause;
-  let depth = 0;
-  while (cur && depth < maxDepth) {
-    chain.push({
-      name: cur.name ?? null,
-      code: cur.code ?? null,
-      errno: cur.errno ?? null,
-      syscall: cur.syscall ?? null,
-      address: cur.address ?? null,
-      port: cur.port ?? null,
-      message: truncate(cur.message, 200),
-    });
-    // AggregateError (undici connect) hides sub-errors in `.errors` — surface
-    // the first so DNS/connect failures aren't swallowed.
-    cur = cur.cause ?? (Array.isArray(cur.errors) ? cur.errors[0] : undefined);
-    depth++;
-  }
-  return chain;
 }
 
 const OS_ENV_VARS = [

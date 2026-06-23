@@ -204,6 +204,38 @@ Add the same env var to the host's MCP registration to capture a real spawn run,
 then compare it against a direct run pointed at the same log file. The `.debug/`
 folder is gitignored.
 
+### Antivirus / firewall HTTPS inspection (TLS-untrusted gateway)
+
+**Symptom:** every `governance_check` returns `BLOCK` with reason
+`gateway_tls_untrusted` (or, with an older SDK, an opaque
+`gateway_unavailable_failclosed`) — but **only** when agent-shield runs as a
+spawned subprocess (e.g. inside OpenClaw), while a direct run works.
+
+**Cause:** a TLS-intercepting security suite (Norton, McAfee, Zscaler, corporate
+proxies, …) re-signs HTTPS traffic with its **own root CA**. That CA lives in the
+Windows/macOS system trust store but **not** in Node's bundled CA set, so Node
+rejects the certificate (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`). The direct shell run
+is often not inspected; the spawned child is.
+
+**Fix — trust the OS certificate store (Node ≥ 22):**
+
+```bash
+node --use-system-ca bin/agent-shield-mcp.mjs
+```
+
+In an MCP host registration, use `command: node` with `--use-system-ca` as the
+first argument before the script path.
+
+**Node < 22 fallback:** point Node at the inspecting CA explicitly:
+
+```bash
+NODE_EXTRA_CA_CERTS=/path/to/your-av-or-proxy-root-ca.pem node bin/agent-shield-mcp.mjs
+```
+
+> **Never** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That disables certificate
+> verification entirely and has no place in a security product. `--use-system-ca`
+> trusts the legitimate OS-store CA **without** weakening verification.
+
 ---
 
 ## Architecture

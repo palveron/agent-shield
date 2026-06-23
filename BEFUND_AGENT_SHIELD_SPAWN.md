@@ -251,3 +251,65 @@ Hier **nicht** gefixt (read-only, fremde Dependency).
 - [x] Zero neue Dependency (`node:dns` + `node:fs`/`os`/`path` + global `fetch`).
 - [x] `node --test` grün: **41/41** (+4: causeChain-Unwrap, AggregateError+Tiefe-Cap, osEnvPresence,
   netSelftest-no-op).
+
+---
+
+## 11. FIX (Fund #5) — TLS-Interception nachhaltig behandelt
+
+**Live-Log #2 bewies die Ursache:** roher `net_selftest_fetch` (außerhalb der SDK) im Spawn schlug mit
+`UNABLE_TO_VERIFY_LEAF_SIGNATURE` fehl, direkt = HTTP 200. Ursache = TLS-interceptende Security-Suite
+(Norton 360): ersetzt das Server-Zertifikat durch eines mit eigenem Root-CA, das im **OS-Trust-Store**
+liegt, aber **nicht** in Nodes eingebautem CA-Bundle → Node lehnt die Kette ab. Der direkte Shell-Lauf
+wird nicht inspiziert, der OpenClaw-Kindprozess schon. Verifizierter Hebel: **`node --use-system-ca`**
+(Node ≥ 22) → Node nutzt den OS-Store → TLS ok → Spawn-Turn liefert MODIFY.
+
+### Strang A — SDK `cause` durchgereicht (SDK-Quelle WAR vorhanden)
+`C:\Projekte\sdk-typescript` ist die Quelle von `@palveron/sdk@1.1.0` (single `src/index.ts`, tsup).
+agent-shield konsumiert sie als **lokales tgz** (`file:../sdk-typescript/palveron-sdk-1.1.0.tgz`). →
+**proper Pfad** (kein node_modules-Hack):
+- `PalveronError`-Konstruktor nimmt jetzt `cause?: unknown` und reicht sie an
+  `super(message, { cause })` (ES2022) durch.
+- Wurf-Stelle `src/index.ts` (vorher `:828`): `new PalveronError('Network error…', { code:'NETWORK_ERROR',
+  …, cause: error })` — das ursprüngliche `TypeError: fetch failed` (mit echtem undici-Grund in dessen
+  `.cause`) bleibt erhalten. **Kein** Decision-/Retry-/Breaker-Verhalten geändert.
+- SDK-Test `src/network-cause.test.ts` (vitest): `PalveronError.cause.cause.code` ===
+  `UNABLE_TO_VERIFY_LEAF_SIGNATURE` bzw. `ECONNREFUSED`. **10/10 vitest grün.**
+- `dist`/`tgz` sind in sdk-typescript **gitignored** (Build-Artefakte) → Operator/CI baut neu
+  (`npm run build && npm pack`); agent-shield reinstalliert das tgz, damit der Fix produktiv greift.
+
+### Strang B — agent-shield: TLS-Interception erkennen + ehrliche Meldung (Defense-in-Depth)
+- Neuer neutraler `src/error-cause.mjs` (`causeChain` aus `debug-log.mjs` extrahiert — kein toter Code,
+  debug-log re-exportiert; lebt jetzt auch auf dem Governance-Pfad, nicht nur im Debug) +
+  `classifyTransportFailure(err)`: TLS-Trust-Codes (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`,
+  `SELF_SIGNED_CERT_IN_CHAIN`, `DEPTH_ZERO_*`, `CERT_*`, `ERR_TLS_*`) → `{reason:'gateway_tls_untrusted',
+  hint}`; echte Netzfehler → `{reason:null}`.
+- `client.mjs` (catch-Pfad): inspiziert die causeChain; bei TLS bleibt **Fail-Closed BLOCK**, aber
+  `reason='gateway_tls_untrusted'` + umsetzbarer `hint` (--use-system-ca / NODE_EXTRA_CA_CERTS) statt
+  des opaken `gateway_unavailable_failclosed`. `ECONNREFUSED`/`ENOTFOUND`/Timeout behalten den
+  generischen Reason (kein Fehl-Reframe).
+- `fail-policy.mjs::transportFallback`: additive `opts.reason`-Override (nur Fail-Closed-Zweig) +
+  `opts.hint`. `mcp-server.mjs`: `hint` bis in die MCP-Antwort durchgereicht (im OpenClaw-Chat sichtbar).
+- Tests `test/tls-interception.test.mjs` (4): TLS-Code→reason+hint, Nicht-TLS→null, verify HIGH TLS→BLOCK
+  +gateway_tls_untrusted+hint, verify HIGH ECONNREFUSED→gateway_unavailable_failclosed (kein hint).
+- **Greift produktiv, sobald die fixierte SDK (Strang A) installiert ist** (cause vorhanden); mit
+  alter SDK degradiert es sauber (leere causeChain → generischer Reason, keine Fehlklassifikation).
+
+### Strang C — REDUZIERT AUF DOKU-ONLY (args-Fix gehört zu Fund #2)
+`init`/`updateOpenClawConfig` (`openclaw-config.mjs:45-55`) schreibt heute `command:"npx",
+args:["-y","-p","@palveron/agent-shield","agent-shield-mcp"]` (Fund-#2-Pfad: nicht-publiziertes npx +
+Top-Level-`mcpServers`). `--use-system-ca` ist ein **Node**-Flag und lässt sich nicht sauber an die
+**npx**-Invocation hängen — es braucht die `command:"node", args:["--use-system-ca", "<pfad>"]`-Form,
+also genau die npx→node-Migration, die **Fund #2** besitzt. Pro Goal-Vorgabe daher **kein** Eingriff in
+den kaputten init-Pfad (kein Scope-Mixing); der args-Fix wandert ins Fund-#2-Goal. Geliefert: **nur
+Doku** (README „Antivirus/firewall HTTPS inspection" + `openclaw.mdx` EN+DE „Troubleshooting/
+Fehlerbehebung") mit `--use-system-ca` + `NODE_EXTRA_CA_CERTS`-Fallback. **Tabu eingehalten:** kein
+`NODE_TLS_REJECT_UNAUTHORIZED=0` irgendwo.
+
+### Gates #3 (erfüllt)
+- [x] agent-shield `node --test` **45/45** (+4 TLS); SDK `vitest` **10/10** (+2 cause).
+- [x] Fail-Closed bei HIGH unverändert; Diff additiv; kein Governance-Pfad-Verhalten geändert.
+- [x] Diagnose intakt (off-by-default); `causeChain` extrahiert → von Diagnose **und** Live-Pfad genutzt
+  (kein toter Code).
+- [x] Kein Secret in Logs/Doku; zero neue Runtime-Dependency.
+- [x] Kein node_modules/dist-Hack; SDK in der **Quelle** gefixt; `package.json` der agent-shield
+  unverändert (`^1.1.0`).

@@ -200,6 +200,9 @@ async function handleToolCall(id, params, client, agentId, transport) {
             modified_input: result.modified_input || null,
             trace_id: result.trace_id || null,
             risk_level: classifyRisk(toolName),
+            // Actionable remediation (e.g. TLS-interception → --use-system-ca) so
+            // the user sees HOW to fix a fail-closed BLOCK, not just that it blocked.
+            ...(result.hint ? { hint: result.hint } : {}),
             ...(result._fallback ? { _fallback: true } : {}),
           }),
         },

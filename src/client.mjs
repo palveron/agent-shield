@@ -21,6 +21,7 @@ import { Palveron } from '@palveron/sdk';
 import { classifyRisk } from './risk-classifier.mjs';
 import { isFailLoud, transportFallback } from './fail-policy.mjs';
 import { dlog, causeChain } from './debug-log.mjs';
+import { classifyTransportFailure } from './error-cause.mjs';
 
 /**
  * Classify a thrown SDK error into a diagnostic `outcome` for the spawn log.
@@ -307,10 +308,12 @@ export class ShieldClient {
         errName: err?.name ?? null,
         errCode: err?.code ?? null,
         errMessage: String(err?.message ?? '').slice(0, 200),
-        // The SDK masks transport failures as a generic NETWORK_ERROR and DROPS
-        // the original error (sdk index.mjs:379-387) — so causeChain on the SDK
-        // error is usually empty here, which itself confirms the mask. The raw
-        // reason is recovered by net_selftest_fetch (raw fetch outside the SDK).
+        // @palveron/sdk ≥1.2.0 preserves the original transport error on the
+        // PalveronError's `cause` (the NETWORK_ERROR no longer discards it), so
+        // causeChain here surfaces the real undici reason (TLS-trust / connect /
+        // DNS) directly off the SDK error. net_selftest_fetch (raw fetch outside
+        // the SDK) remains as an independent cross-check. Older SDKs dropped the
+        // cause → the chain was simply empty and callers degraded gracefully.
         errStack: String(err?.stack ?? '').slice(0, 600),
         causeChain: causeChain(err),
         ...(outcome === 'timeout' ? { timeoutMs: this.#timeoutMs } : {}),
@@ -323,11 +326,19 @@ export class ShieldClient {
       if (isFailLoud(err)) throw err;
 
       // Transport failure (timeout / circuit-open / network / 5xx) → tiered.
-      const fb = transportFallback(riskLevel, { errorMessage: err?.message });
+      // Inspect the cause chain for a TLS-trust failure (HTTPS-inspecting AV /
+      // firewall): keep the fail-CLOSED BLOCK, but replace the opaque
+      // gateway_unavailable_failclosed with an honest, actionable reason+hint so
+      // the user sees WHY and HOW to fix it instead of a bare BLOCK. Genuine
+      // connect/DNS/timeout failures keep the generic reason.
+      const { reason: tlsReason, hint } = classifyTransportFailure(err);
+      const fb = transportFallback(riskLevel, {
+        errorMessage: err?.message,
+        ...(tlsReason ? { reason: tlsReason, hint } : {}),
+      });
       // failclosed_emit closes the causal chain: this branch is what produced
-      // gateway_unavailable_failclosed (when fb.decision === 'BLOCK'). `branch`
-      // names the outcome that caused it — breaker_open_shortcircuit (H1) vs a
-      // real transport_error/timeout (H2/H3).
+      // the fail-closed verdict. `branch` names the outcome that caused it —
+      // breaker_open_shortcircuit (H1) vs a real transport_error/timeout (H2/H3).
       dlog('failclosed_emit', { reason: fb.reason, decision: fb.decision, branch: outcome, riskLevel, errName: err?.name ?? null });
       return fb;
     }

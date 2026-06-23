@@ -65,16 +65,22 @@ export function isFailLoud(err) {
  * @param {object} [opts]
  * @param {string} [opts.errorMessage] - Diagnostic message (attached as `_error`).
  * @param {number} [opts.retryAfterMs] - Rate-limit hint to surface to the caller.
+ * @param {string} [opts.reason] - Specific fail-CLOSED reason override (e.g.
+ *   `gateway_tls_untrusted`). Only used on the BLOCK branch; the generic
+ *   gateway-unavailable reason stays for ordinary connect/DNS/timeout failures.
+ * @param {string} [opts.hint] - Actionable, user-facing remediation hint
+ *   (surfaced to the agent/MCP response). Attached when present.
  * @param {NodeJS.ProcessEnv} [opts.env] - Injectable env (for tests).
- * @returns {{decision: 'ALLOW'|'BLOCK', reason: string, _fallback: true, _error?: string, retry_after_ms?: number}}
+ * @returns {{decision: 'ALLOW'|'BLOCK', reason: string, _fallback: true, hint?: string, _error?: string, retry_after_ms?: number}}
  */
 export function transportFallback(riskLevel, opts = {}) {
   const failClosed = failClosedOverride(opts.env) || riskLevel === 'HIGH';
   if (failClosed) {
     return {
       decision: 'BLOCK',
-      reason: FAIL_CLOSED_REASON,
+      reason: opts.reason || FAIL_CLOSED_REASON,
       _fallback: true,
+      ...(opts.hint ? { hint: opts.hint } : {}),
       ...(opts.errorMessage ? { _error: opts.errorMessage } : {}),
       ...(opts.retryAfterMs !== undefined ? { retry_after_ms: opts.retryAfterMs } : {}),
     };
@@ -83,6 +89,7 @@ export function transportFallback(riskLevel, opts = {}) {
     decision: 'ALLOW',
     reason: FAIL_OPEN_REASON,
     _fallback: true,
+    ...(opts.hint ? { hint: opts.hint } : {}),
     ...(opts.errorMessage ? { _error: opts.errorMessage } : {}),
     ...(opts.retryAfterMs !== undefined ? { retry_after_ms: opts.retryAfterMs } : {}),
   };

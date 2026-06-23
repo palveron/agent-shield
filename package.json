@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/palveron/agent-shield"
+    "url": "git+https://github.com/palveron/agent-shield.git"
   },
   "homepage": "https://palveron.com",
   "keywords": [
@@ -18,8 +18,8 @@
     "mcp"
   ],
   "bin": {
-    "agent-shield": "./bin/agent-shield.mjs",
-    "agent-shield-mcp": "./bin/agent-shield-mcp.mjs"
+    "agent-shield": "bin/agent-shield.mjs",
+    "agent-shield-mcp": "bin/agent-shield-mcp.mjs"
   },
   "main": "./src/index.mjs",
   "type": "module",
@@ -45,6 +45,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@palveron/sdk": "^1.1.0"
+    "@palveron/sdk": "^1.2.0"
   }
 }
