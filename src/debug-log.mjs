@@ -32,6 +32,8 @@
 
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { getServers } from 'node:dns';
+import { lookup } from 'node:dns/promises';
 
 const LOG_PATH = (process.env.AGENT_SHIELD_DEBUG_LOG_PATH ?? '').trim();
 const ENABLED = LOG_PATH.length > 0;
@@ -73,10 +75,18 @@ export function dlog(event, fields = {}) {
       event,
       ...fields,
     });
-    appendFileSync(LOG_PATH, line + '\n', 'utf8');
+    // Explicit UTF-8 bytes so non-ASCII in error messages (em dash, etc.) is
+    // not mangled by a platform default code page.
+    appendFileSync(LOG_PATH, Buffer.from(line + '\n', 'utf8'));
   } catch {
     // Swallow: a diagnostics IO error must never reach the governance path.
   }
+}
+
+/** Truncate a string to `n` chars (secret-safe diagnostics never log full bodies). */
+function truncate(s, n) {
+  const str = String(s ?? '');
+  return str.length > n ? str.slice(0, n) : str;
 }
 
 /**
@@ -132,4 +142,144 @@ export function collectProxyEnv(env = process.env) {
     }
   }
   return out;
+}
+
+/**
+ * Resolve a thrown error's `cause` chain into a flat, secret-safe array. Node /
+ * undici stash the REAL transport reason (ENOTFOUND, ECONNREFUSED,
+ * UND_ERR_CONNECT_TIMEOUT, EPERM, CERT_*) in `err.cause` — the SDK masks the
+ * surface as a generic NETWORK_ERROR, so this is how the real reason surfaces.
+ * @param {unknown} err
+ * @param {number} [maxDepth]
+ * @returns {Array<{name:?string,code:?string,errno:?number,syscall:?string,address:?string,port:?(number|string),message:string}>}
+ */
+export function causeChain(err, maxDepth = 5) {
+  const chain = [];
+  let cur = err?.cause;
+  let depth = 0;
+  while (cur && depth < maxDepth) {
+    chain.push({
+      name: cur.name ?? null,
+      code: cur.code ?? null,
+      errno: cur.errno ?? null,
+      syscall: cur.syscall ?? null,
+      address: cur.address ?? null,
+      port: cur.port ?? null,
+      message: truncate(cur.message, 200),
+    });
+    // AggregateError (undici connect) hides sub-errors in `.errors` — surface
+    // the first so DNS/connect failures aren't swallowed.
+    cur = cur.cause ?? (Array.isArray(cur.errors) ? cur.errors[0] : undefined);
+    depth++;
+  }
+  return chain;
+}
+
+const OS_ENV_VARS = [
+  'SystemRoot',
+  'WINDIR',
+  'SystemDrive',
+  'USERPROFILE',
+  'TEMP',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'ProgramFiles',
+  'ProgramData',
+];
+
+/**
+ * Presence-only map of the OS env vars OpenClaw might strip from a child. Values
+ * are NEVER logged (paths can be sensitive); only `true/false`, plus PATH length
+ * so an empty/stripped PATH is visible. Detects an over-stripped spawn env.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function osEnvPresence(env = process.env) {
+  const out = {};
+  for (const k of OS_ENV_VARS) out[k] = env[k] !== undefined && env[k] !== '';
+  out.PATH = { present: typeof env.PATH === 'string' && env.PATH.length > 0, len: env.PATH ? env.PATH.length : 0 };
+  return out;
+}
+
+/**
+ * TLS / undici env relevant to fetch behaviour. NODE_EXTRA_CA_CERTS is logged as
+ * presence + PATH only (never the cert content). UNDICI_* config values are not
+ * secrets. Decides TLS-related spawn divergence.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function tlsEnvSnapshot(env = process.env) {
+  const undici = {};
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('UNDICI_')) undici[k] = env[k];
+  }
+  return {
+    NODE_TLS_REJECT_UNAUTHORIZED: env.NODE_TLS_REJECT_UNAUTHORIZED ?? null,
+    NODE_EXTRA_CA_CERTS_present: !!env.NODE_EXTRA_CA_CERTS,
+    NODE_EXTRA_CA_CERTS_path: env.NODE_EXTRA_CA_CERTS ?? null, // path only, no content
+    ...(Object.keys(undici).length ? { undici } : {}),
+  };
+}
+
+/** The system DNS resolvers, read-only. Never throws. Decides resolver divergence. */
+export function dnsServersSafe() {
+  try {
+    return getServers();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Active, low-level connectivity self-test — ONLY runs when diagnostics are
+ * enabled (otherwise a pure no-op: no DNS, no fetch, no network). Each step is
+ * isolated in its own try/catch and emits its own event; it can never throw into
+ * or delay the governance path beyond its own short timeout. Runs the raw
+ * `fetch` OUTSIDE the SDK so the un-masked undici cause chain is visible.
+ *
+ * @param {string} apiUrl - Gateway base URL (no secret).
+ * @returns {Promise<void>}
+ */
+export async function netSelftest(apiUrl) {
+  if (!ENABLED || !apiUrl) return;
+
+  let host;
+  try {
+    host = new URL(apiUrl).hostname;
+  } catch {
+    return; // unparseable URL — nothing to probe
+  }
+
+  // 1) DNS lookup — does name resolution itself fail in this spawn context?
+  const t0 = Date.now();
+  try {
+    const r = await lookup(host);
+    dlog('net_selftest_dns', { host, address: r.address, family: r.family, elapsedMs: Date.now() - t0 });
+  } catch (e) {
+    dlog('net_selftest_dns', {
+      host,
+      errName: e?.name ?? null,
+      errCode: e?.code ?? null,
+      errno: e?.errno ?? null,
+      syscall: e?.syscall ?? null,
+      elapsedMs: Date.now() - t0,
+    });
+  }
+
+  // 2) Raw GET /health (idempotent, no mutation) — the un-SDK-masked transport
+  //    result. On failure the full cause chain reveals DNS vs connect vs TLS vs
+  //    EPERM/egress-block.
+  const healthUrl = `${apiUrl.replace(/\/+$/, '')}/health`;
+  const t1 = Date.now();
+  try {
+    const res = await fetch(healthUrl, { method: 'GET', signal: AbortSignal.timeout(3000) });
+    dlog('net_selftest_fetch', { url: healthUrl, httpStatus: res.status, elapsedMs: Date.now() - t1 });
+  } catch (e) {
+    dlog('net_selftest_fetch', {
+      url: healthUrl,
+      errName: e?.name ?? null,
+      errCode: e?.code ?? null,
+      errMessage: truncate(e?.message, 200),
+      causeChain: causeChain(e),
+      elapsedMs: Date.now() - t1,
+    });
+  }
 }

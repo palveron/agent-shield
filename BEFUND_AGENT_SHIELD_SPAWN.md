@@ -181,3 +181,73 @@ Env-Propagation-Fix, Breaker-Reset/Half-Open-Strategie oder Handshake-Ordering �
   `mcpServers` + nicht-publiziertes `npx` (Fund #2); CLI `status` zeigt 9 statt 15
   (SYSTEM_SHIELD-Filter); `test`-Erwartung „Dangerous→BLOCK" veraltet (Policy=APPROVAL);
   `pv_live_`/Resend-Key-Rotation vor Launch.
+
+---
+
+## 10. VERTIEFUNG (Diagnose #2) — SDK-Fehlermaske aufbrechen
+
+### 10.1 Live-Log-Stand (bewiesen, zwei `pid`, identische Config)
+- **Spawn (OpenClaw):** `proc_start` korrekt (`apiUrl=https://gateway.palveron.com`, `apiKeyLen:72`,
+  `agentId:palveron-setup`, `proxyEnv:{}`, `nodeOptions:null`, `cwd=…\.openclaw\workspace`) →
+  `gateway_call_end.outcome="transport_error"`, `errCode:"NETWORK_ERROR"`, `~1025 ms` → BLOCK.
+- **Direkt:** identische Config, `cwd=C:\Projekte\agent-shield` → `http_ok`, `200`,
+  `decision:ANONYMIZED`.
+- **Widerlegt:** H1 (Breaker `closed`, 1 Call), H2 (Proxy `{}` beidseitig), H3 (Spawn-Env korrekt),
+  H9 (`SystemRoot`/`WINDIR`/`SystemDrive` ergänzt, BLOCK blieb). **Belegt:** Egress scheitert nur im
+  Spawn-Kontext, ~1 s, deterministisch — Unterschied liegt im OpenClaw-Spawn, nicht in der Config.
+
+### 10.2 Read-only-Befund: die SDK VERWIRFT die Ursache (SDK-Fix-Kandidat)
+`@palveron/sdk/dist/index.mjs:379-387` — im `catch` der Request-Schleife:
+```js
+if (error instanceof TypeError && error.message.includes("fetch")) {
+  this.circuit.onFailure();
+  lastError = new PalveronError("Network error — could not reach gateway",
+    { code: "NETWORK_ERROR", statusCode: 0, requestId, retryable: true });
+  continue;   // ← der ursprüngliche `error` (TypeError mit .cause = echter undici-Grund) wird verworfen
+}
+```
+Der echte Grund (`ENOTFOUND`/`ECONNREFUSED`/`UND_ERR_CONNECT_TIMEOUT`/`EPERM`/`CERT_*`) liegt in
+`error.cause` der `TypeError: fetch failed` — die SDK reicht ihn **nicht** als `cause` an den neuen
+`PalveronError` weiter. **Konsequenz:** `causeChain` auf der **SDK**-Exception ist leer (bestätigt die
+Maske); der rohe Grund ist nur **außerhalb** der SDK sichtbar. → **Eigener SDK-Fix-Kandidat fürs
+Fix-Goal:** `new PalveronError(msg, { code:'NETWORK_ERROR', cause: error, … })` (cause durchreichen).
+Hier **nicht** gefixt (read-only, fremde Dependency).
+
+### 10.3 Neue Instrumente (additiv)
+- **`gateway_call_end`** (`client.mjs` verify+health catch) jetzt zusätzlich `errStack` (≤600) +
+  `causeChain` (rekursiv, Tiefe 5, folgt auch `AggregateError.errors`). Auf der SDK-Maske erwartet
+  leer → beweist die Verwerfung.
+- **`net_selftest_dns`** + **`net_selftest_fetch`** (`debug-log.mjs::netSelftest`, gerufen in
+  `bin` **nur bei aktivem Debug-Pfad**): roher `dns.lookup(host)` + roher `fetch(${apiUrl}/health)`
+  (GET, 3 s Timeout) **außerhalb** der SDK → liefert den **un-maskierten** undici-`causeChain`.
+  Der Client nutzt real `${apiUrl}/health` (`client.mjs:332`, SDK `index.mjs:243 request("GET","/health")`).
+  **Dev-Smoke-Beleg:** der rohe Selbsttest fing in der Entwickler-Umgebung
+  `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (TLS) — genau die Art Grund, die die SDK als `NETWORK_ERROR`
+  verbirgt (Umgebungs-spezifisch; der Betreiber-Spawn-vs-Direkt-Vergleich liefert dessen echten Code).
+- **`proc_start`** erweitert (alle secret-frei): `versions{node,undici,openssl}`, `execPath`,
+  `dnsServers` (`dns.getServers()`), `tlsEnv` (`NODE_TLS_REJECT_UNAUTHORIZED`,
+  `NODE_EXTRA_CA_CERTS` nur Präsenz+Pfad, `UNDICI_*`), `osEnv` (Präsenz-Map kritischer OS-Vars +
+  `PATH`-Länge, **keine** Werte).
+- **UTF-8-Fix:** `dlog` schreibt `Buffer.from(line,'utf8')` → Mojibake (`â€"`) behoben, em-dash
+  round-trip per Test belegt (Bytes `e2 80 94`).
+
+### 10.4 Entscheidungs-Matrix #2 (was der nächste Log beweist)
+| Signal im Spawn-`pid` | Verdikt → Fix-Richtung |
+|---|---|
+| `net_selftest_dns.errCode = ENOTFOUND/EAI_AGAIN` | DNS-Resolver-Sicht im Spawn kaputt → DNS/Resolver-Fix |
+| `net_selftest_fetch.causeChain[].code = ECONNREFUSED/ENETUNREACH/EPERM` | Egress-Block/Firewall im Spawn → Proxy-Bypass/Egress-Allow |
+| `…code = UND_ERR_CONNECT_TIMEOUT` | Connect-Timeout (langsamer/geblockter Pfad) → Timeout/Route |
+| `…code = CERT_*`/`UNABLE_TO_VERIFY_LEAF_SIGNATURE` | TLS-Trust im Spawn (fehlendes CA / MITM) → `NODE_EXTRA_CA_CERTS`/CA-Fix |
+| Selbsttest **ok**, aber SDK-`verify` `transport_error` | Divergenz SDK-`fetch`-Optionen vs. roher fetch → SDK/undici-Config |
+| `osEnv.PATH.len:0` o. `USERPROFILE:false` im Spawn (vs. Direkt) | OpenClaw strippt Kind-Env → Env-Propagation-Fix |
+
+### 10.5 Akzeptanzgates #2 (erfüllt)
+- [x] Off-by-default: kein Netz-Selbsttest, kein File-IO ohne `AGENT_SHIELD_DEBUG_LOG_PATH` (Test
+  „netSelftest no-op when disabled"; 37 Vorgänger-Tests unverändert grün).
+- [x] Selbsttest + `dlog` werfen nie (je Schritt eigenes try/catch; `netSelftest(...).catch(()=>{})`).
+- [x] Diff rein additiv — keine Governance-/Decision-Logik berührt.
+- [x] Kein Secret: Key nur Länge; OS-Env nur Präsenz; CA nur Pfad; Proxy sanitisiert; kein arg-Wert.
+- [x] UTF-8 verifiziert (em-dash Bytes `e2 80 94`).
+- [x] Zero neue Dependency (`node:dns` + `node:fs`/`os`/`path` + global `fetch`).
+- [x] `node --test` grün: **41/41** (+4: causeChain-Unwrap, AggregateError+Tiefe-Cap, osEnvPresence,
+  netSelftest-no-op).

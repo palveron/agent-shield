@@ -11,7 +11,16 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { isDebugEnabled, dlog, keyMeta, sanitizeProxyUrl, collectProxyEnv } from '../src/debug-log.mjs';
+import {
+  isDebugEnabled,
+  dlog,
+  keyMeta,
+  sanitizeProxyUrl,
+  collectProxyEnv,
+  causeChain,
+  osEnvPresence,
+  netSelftest,
+} from '../src/debug-log.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // file:// URL so the subprocess `import()` works on Windows (drive paths aren't
@@ -86,6 +95,65 @@ test('enabled: writes valid JSONL with ts/pid/monotonic-seq and no raw secret', 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('causeChain unwraps the nested transport reason (the SDK masks it at the surface)', () => {
+  // Mimic `TypeError: fetch failed` → cause: real undici/Node error.
+  const inner = Object.assign(new Error('connect ECONNREFUSED 1.2.3.4:443'), {
+    code: 'ECONNREFUSED',
+    errno: -4078,
+    syscall: 'connect',
+    address: '1.2.3.4',
+    port: 443,
+  });
+  const top = new TypeError('fetch failed');
+  top.cause = inner;
+
+  const chain = causeChain(top);
+  assert.equal(chain.length, 1, 'one cause level');
+  assert.equal(chain[0].code, 'ECONNREFUSED');
+  assert.equal(chain[0].syscall, 'connect');
+  assert.equal(chain[0].address, '1.2.3.4');
+  assert.equal(chain[0].port, 443);
+});
+
+test('causeChain follows AggregateError .errors and caps depth', () => {
+  // undici connect failures surface sub-errors in `.errors`.
+  const agg = new Error('all attempts failed');
+  agg.errors = [Object.assign(new Error('getaddrinfo ENOTFOUND gw'), { code: 'ENOTFOUND', syscall: 'getaddrinfo' })];
+  const top = new Error('fetch failed');
+  top.cause = agg;
+  const chain = causeChain(top);
+  assert.equal(chain[0].message.includes('all attempts failed'), true);
+  assert.equal(chain[1].code, 'ENOTFOUND', 'sub-error via .errors is surfaced');
+
+  // Depth cap: a chain longer than 5 is truncated, never infinite.
+  let head = new Error('L0');
+  let node = head;
+  for (let i = 1; i < 10; i++) {
+    node.cause = new Error(`L${i}`);
+    node = node.cause;
+  }
+  assert.equal(causeChain(head).length, 5, 'depth capped at 5');
+  assert.deepEqual(causeChain({}), [], 'no cause → empty chain');
+});
+
+test('osEnvPresence reports presence only (never values) + PATH length', () => {
+  const env = { SystemRoot: 'C:\\Windows', PATH: 'a;b;c' }; // WINDIR/TEMP/etc. absent
+  const m = osEnvPresence(env);
+  assert.equal(m.SystemRoot, true);
+  assert.equal(m.WINDIR, false);
+  assert.equal(m.TEMP, false);
+  assert.deepEqual(m.PATH, { present: true, len: 5 });
+  // Hard secret-hygiene: the actual SystemRoot path value must not leak.
+  assert.equal(JSON.stringify(m).includes('Windows'), false, 'env values must never appear');
+});
+
+test('netSelftest is a no-op when diagnostics are disabled (no DNS, no fetch, no throw)', async () => {
+  assert.equal(isDebugEnabled(), false, 'precondition: disabled in runner');
+  // Resolves to undefined without touching the network or throwing. An IP that
+  // would hang if probed proves it short-circuits before any fetch.
+  await assert.doesNotReject(() => netSelftest('http://10.255.255.1:81'));
 });
 
 test('enabled but unwritable path → still never throws (Correctness > Diagnosis)', () => {

@@ -20,7 +20,7 @@
 import { Palveron } from '@palveron/sdk';
 import { classifyRisk } from './risk-classifier.mjs';
 import { isFailLoud, transportFallback } from './fail-policy.mjs';
-import { dlog } from './debug-log.mjs';
+import { dlog, causeChain } from './debug-log.mjs';
 
 /**
  * Classify a thrown SDK error into a diagnostic `outcome` for the spawn log.
@@ -307,6 +307,12 @@ export class ShieldClient {
         errName: err?.name ?? null,
         errCode: err?.code ?? null,
         errMessage: String(err?.message ?? '').slice(0, 200),
+        // The SDK masks transport failures as a generic NETWORK_ERROR and DROPS
+        // the original error (sdk index.mjs:379-387) — so causeChain on the SDK
+        // error is usually empty here, which itself confirms the mask. The raw
+        // reason is recovered by net_selftest_fetch (raw fetch outside the SDK).
+        errStack: String(err?.stack ?? '').slice(0, 600),
+        causeChain: causeChain(err),
         ...(outcome === 'timeout' ? { timeoutMs: this.#timeoutMs } : {}),
         elapsedMs: Date.now() - startedAt,
       });
@@ -349,6 +355,8 @@ export class ShieldClient {
         errName: err?.name ?? null,
         errCode: err?.code ?? null,
         errMessage: String(err?.message ?? '').slice(0, 200),
+        errStack: String(err?.stack ?? '').slice(0, 600),
+        causeChain: causeChain(err),
         elapsedMs: Date.now() - startedAt,
       });
       throw err;
