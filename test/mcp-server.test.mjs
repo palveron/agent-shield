@@ -110,7 +110,8 @@ test('F1: governance_check missing input → ERROR (never ALLOW); F4: real tools
     assert.equal(d4.decision, 'ALLOW', 'list_directory resolves to the gateway PASSED verdict');
     assert.notEqual(d4.reason, 'low_risk_tool', 'there must be no local skip path');
     assert.equal(verifyCalls.length, 1, 'the "low-risk" tool must have hit /verify (no skip)');
-    assert.equal(verifyCalls[0].context.tool_name, 'list_directory');
+    // Goal 2b — the wire tool_name is normalized: list_directory → files:read.
+    assert.equal(verifyCalls[0].context.tool_name, 'files:read');
   } finally {
     await new Promise((r) => server.close(r));
   }

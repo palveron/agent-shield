@@ -55,9 +55,20 @@ test('verify body matches the gateway contract: prompt top-level, context.tool_n
   // The bytes on the wire — the whole point of the SDK migration.
   assert.equal(captured.url, '/api/v1/verify');
   assert.equal(captured.body.prompt, 'rm -rf /tmp/build', 'prompt MUST be top-level');
-  assert.equal(captured.body.context.tool_name, 'exec', 'tool_name MUST be nested under context');
+  // Goal 2b — the gateway tool_name is NORMALIZED to the capability taxonomy
+  // (`exec` → `infra:code_exec` → DENY under the Goal-1 preset). This is the
+  // ONLY place the native name is translated.
+  assert.equal(
+    captured.body.context.tool_name,
+    'infra:code_exec',
+    'tool_name MUST be nested under context AND normalized to the capability key',
+  );
   assert.equal(captured.body.metadata.agent_id, 'agent-7', 'agent_id MUST be in metadata');
   assert.equal(captured.body.metadata.source, 'agent-shield');
+  // classifyRisk-Trennlinie: risk_level is computed from the NATIVE name. `exec`
+  // is HIGH natively; classifyRisk('infra:code_exec') would be MEDIUM, so a HIGH
+  // here proves the fail-policy still keys off the native tool, not the
+  // normalized gateway key.
   assert.equal(captured.body.metadata.risk_level, 'HIGH');
   // SDK uses Bearer auth.
   assert.match(captured.headers.authorization ?? '', /^Bearer pv_live_x$/);

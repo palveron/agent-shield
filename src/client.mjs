@@ -19,6 +19,7 @@
 
 import { Palveron } from '@palveron/sdk';
 import { classifyRisk } from './risk-classifier.mjs';
+import { normalizeToolName } from './tool-normalization.mjs';
 import { isFailLoud, transportFallback } from './fail-policy.mjs';
 import { dlog, causeChain } from './debug-log.mjs';
 import { classifyTransportFailure } from './error-cause.mjs';
@@ -210,7 +211,11 @@ export class ShieldClient {
    * @returns {Promise<{decision:'ALLOW'|'BLOCK'|'MODIFY'|'APPROVAL', reason:(string|null), modified_input?:(string|null), trace_id?:(string|null), findings?:Array, _fallback?:boolean}>}
    */
   async verify({ agentId, toolName, input, metadata = {} }) {
+    // Fail-policy + risk_level + all logs key off the NATIVE tool name — never
+    // overwrite `toolName` (BEFUND Strang B classifyRisk-Trennlinie).
     const riskLevel = toolName ? classifyRisk(toolName) : 'MEDIUM';
+    // Only the gateway-bound capability key is normalized to `prefix:action`.
+    const gatewayToolName = toolName ? normalizeToolName(toolName) : undefined;
 
     // ── Diagnostics (no-op unless AGENT_SHIELD_DEBUG_LOG_PATH set) ──
     // `attempt: 0` is the agent-shield-level call; the SDK does its own internal
@@ -225,7 +230,7 @@ export class ShieldClient {
     try {
       const res = await this.#sdk.verify({
         prompt: input ?? '',
-        context: toolName ? { toolName } : undefined,
+        context: gatewayToolName ? { toolName: gatewayToolName } : undefined,
         metadata: {
           ...metadata,
           ...(agentId ? { agent_id: agentId } : {}),

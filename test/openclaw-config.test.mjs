@@ -78,3 +78,56 @@ test('returns false when no candidate config file exists', async () => {
     await rm(emptyCwd, { recursive: true, force: true });
   }
 });
+
+// Goal 2b — identity binding: when init resolved an agent_id, it is written into
+// the MCP env so the runtime sends the REAL identity (mcp-server.mjs:43).
+test('writes AGENT_SHIELD_AGENT_ID into the env when config.agentId is set', async () => {
+  const home = await tmpRoot();
+  const emptyCwd = await tmpRoot();
+  try {
+    const cfgPath = join(home, '.openclaw', 'openclaw.json');
+    await mkdir(join(home, '.openclaw'), { recursive: true });
+    await writeFile(cfgPath, JSON.stringify({ mcpServers: { keepme: { command: 'foo' } } }, null, 2));
+
+    const updated = await updateOpenClawConfig(
+      { apiUrl: 'https://gw', apiKey: 'pv_live_x', agentId: 'agent_real_123' },
+      { home, cwd: emptyCwd },
+    );
+
+    assert.equal(updated, true);
+    const env = JSON.parse(await readFile(cfgPath, 'utf8')).mcpServers['agent-shield'].env;
+    assert.equal(env.AGENT_SHIELD_AGENT_ID, 'agent_real_123', 'real id must be bound into the env');
+    assert.equal(env.PALVERON_API_URL, 'https://gw');
+    assert.equal(env.PALVERON_API_KEY, 'pv_live_x');
+    // Foreign entry untouched.
+    assert.deepEqual(
+      JSON.parse(await readFile(cfgPath, 'utf8')).mcpServers.keepme,
+      { command: 'foo' },
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(emptyCwd, { recursive: true, force: true });
+  }
+});
+
+// Without an agentId the env key must be ABSENT (not empty-string) so the MCP
+// runtime falls back to 'default' exactly as before — graceful, inert.
+test('omits AGENT_SHIELD_AGENT_ID entirely when config.agentId is unset', async () => {
+  const home = await tmpRoot();
+  const emptyCwd = await tmpRoot();
+  try {
+    const cfgPath = join(home, '.openclaw', 'openclaw.json');
+    await mkdir(join(home, '.openclaw'), { recursive: true });
+    await writeFile(cfgPath, JSON.stringify({}, null, 2));
+
+    await updateOpenClawConfig({ apiUrl: 'u', apiKey: 'k' }, { home, cwd: emptyCwd });
+
+    const env = JSON.parse(await readFile(cfgPath, 'utf8')).mcpServers['agent-shield'].env;
+    assert.ok(!('AGENT_SHIELD_AGENT_ID' in env), 'env key must be absent, not empty-string');
+    assert.equal(env.PALVERON_API_URL, 'u');
+    assert.equal(env.PALVERON_API_KEY, 'k');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(emptyCwd, { recursive: true, force: true });
+  }
+});

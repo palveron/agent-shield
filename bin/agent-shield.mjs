@@ -84,6 +84,16 @@ async function cmdInit() {
     if (result.agent_name) {
       ok(`Agent "${result.agent_name}" registered`);
     }
+    // Goal 2b — bind the REAL agent identity. `setupShield` already returns the
+    // resolved agent_id (Goal 2a: ACTIVE + capabilityModel-seeded). Pass it to
+    // the config writer so the MCP runtime sends it as metadata.agent_id and the
+    // gateway ENFORCES capability instead of falling through to the unevaluated
+    // 'default'. If the gateway omits agent_id, this stays undefined → no env key
+    // → runtime keeps using 'default' (today's behaviour). Graceful.
+    if (result.agent_id) {
+      config.agentId = result.agent_id;
+      ok(`Identity bound: agent ${result.agent_id}`);
+    }
   } catch (err) {
     fail('Shield setup failed');
     error(err.message);

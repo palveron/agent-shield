@@ -17,7 +17,7 @@ import { homedir } from 'node:os';
  *   <cwd>/openclaw.json
  *   <cwd>/.openclaw/config.json
  *
- * @param {{apiUrl?: string, apiKey?: string}} config
+ * @param {{apiUrl?: string, apiKey?: string, agentId?: string}} config
  * @param {{home?: string, cwd?: string}} [opts] - injectable for tests.
  * @returns {Promise<boolean>} true if a config file was found and updated.
  */
@@ -51,6 +51,10 @@ export async function updateOpenClawConfig(config, opts = {}) {
         env: {
           PALVERON_API_URL: config.apiUrl || '',
           PALVERON_API_KEY: config.apiKey || '',
+          // Goal 2b — bind the real agent identity ONLY when init resolved one.
+          // Absent (not empty-string) when unknown so the MCP runtime falls back
+          // to 'default' (mcp-server.mjs:43) exactly as before.
+          ...(config.agentId ? { AGENT_SHIELD_AGENT_ID: config.agentId } : {}),
         },
       };
 
