@@ -25,6 +25,30 @@ import { dlog, causeChain } from './debug-log.mjs';
 import { classifyTransportFailure } from './error-cause.mjs';
 
 /**
+ * Extract a human-readable detail from a Shield/gateway error body, tolerant of
+ * BOTH error-contract shapes so a thrown Error never contains `[object Object]`:
+ *   - NEW (B1a+): `{ error: { code, message, request_id } }` — object.
+ *   - LEGACY:     `{ error: "<message>" }` — flat string.
+ *   - Verdict:    `{ reason: "<why>" }` (BLOCKED bodies carry `reason`, not `error`).
+ * Falls back to the raw text when the body has no usable message or is not JSON.
+ * Never throws.
+ * @param {string} text raw response body text
+ * @returns {string}
+ */
+export function parseShieldErrorDetail(text) {
+  try {
+    const parsed = JSON.parse(text);
+    const e = parsed && parsed.error;
+    if (e && typeof e === 'object') return typeof e.message === 'string' ? e.message : text;
+    if (typeof e === 'string') return e;
+    if (parsed && typeof parsed.reason === 'string') return parsed.reason;
+    return text;
+  } catch {
+    return text;
+  }
+}
+
+/**
  * Classify a thrown SDK error into a diagnostic `outcome` for the spawn log.
  * Logging-only — does NOT influence the fail policy (which keys off isFailLoud /
  * the typed errors directly). Distinguishing `breaker_open_shortcircuit` (no
@@ -425,12 +449,9 @@ export class ShieldClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      let detail = text;
-      try {
-        detail = JSON.parse(text).error || text;
-      } catch {
-        // keep raw text
-      }
+      // B1e: tolerate BOTH gateway error-contract shapes (structured object +
+      // legacy flat string) and BLOCKED-verdict `reason` — never `[object Object]`.
+      const detail = parseShieldErrorDetail(text);
       throw new Error(
         `Shield ${method} ${path} failed: HTTP ${res.status}${detail ? ` — ${detail}` : ''}`,
       );
