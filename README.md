@@ -52,7 +52,7 @@ high-risk action, records every check, and masks personal data on the way out.
 npm install -g @palveron/agent-shield
 
 # 2. Set your keys
-export PALVERON_API_KEY="your-key"        # from dashboard signup
+export PALVERON_API_KEY="your-key"        # shown ONCE at signup/rotation (stored hashed; rotate in Settings → API Keys if lost)
 export PALVERON_API_URL="your-api-url"    # API endpoint
 
 # 3. Initialize
@@ -68,19 +68,11 @@ assume a fixed count). Run `agent-shield status` to see them live.
 
 ## What It Protects
 
-`agent-shield init` activates the OpenClaw Shield rule set automatically — no
-configuration needed:
-
-| Rule | Detects | Action |
-|------|---------|--------|
-| **High-Speed Circuit Breaker** | Agent loops (>100 req/min) | BLOCK + Suspend |
-| **Destructive Action Shield** | `rm -rf`, `DROP TABLE`, `git push --force` | BLOCK |
-| **GDPR Privacy Guard** | Emails, phone numbers, IBANs, SSNs | ANONYMIZE |
-| **Fiscal Authority Limit** | Transactions > €1,000 | APPROVAL |
-| **Secret Exfiltration Shield** | API keys, private keys, JWTs in output | BLOCK |
-| **Shell Injection Guard** | `curl\|bash`, `chmod 777`, `eval()` | BLOCK |
-| **Social Media Output Guard** | PII + secrets in outbound messages | ANONYMIZE |
-| **Package Install Watchdog** | npm/pip/apt install from unknown sources | APPROVAL |
+`agent-shield init` activates the shield rule set for your project automatically,
+with no configuration needed. The rules live server-side, so they can evolve
+without a client update: `init` reports which rules it activated for your
+project, and the dashboard shows the active set at any time. Run
+`agent-shield status` to see them live.
 
 ---
 
@@ -271,7 +263,7 @@ Your Agent ──→ agent-shield ──→ @palveron/sdk ──→ Palveron Gat
 
 | Variable | Required | Description |
 |----------|:--------:|-------------|
-| `PALVERON_API_KEY` | ✅ | Your project API key (from dashboard) |
+| `PALVERON_API_KEY` | ✅ | Your project API key (shown once at signup/rotation — stored hashed, not retrievable) |
 | `PALVERON_API_URL` | ✅ | Gateway API endpoint |
 | `AGENT_SHIELD_FAIL_CLOSED` | — | `true` forces fail-closed for all risk levels when the gateway is unreachable. Default: tiered |
 
@@ -286,10 +278,9 @@ An end-to-end smoke that runs the eight launch checks against a real gateway. It
 is **not** shipped in the npm package.
 
 > ⚠️ **Run it only against a dedicated, disposable project.** Check #8 (`init` /
-> `setupShield`) **writes policies and an agent** into the project. There is no
-> test or sandbox key today — every Palveron key is a live `pv_live_` key, so
-> isolation comes from targeting a **separate throwaway project**, not from a key
-> prefix.
+> `setupShield`) **writes policies and an agent** into the project the key points
+> at. Create a throwaway project just for the smoke and use its key here — never
+> point this at a project holding real data.
 
 Setup:
 
@@ -312,13 +303,10 @@ all hard checks passed.
 
 ## Tiers
 
-| | Community | Pro | Business | Enterprise |
-|--|-----------|-----|----------|-----------|
-| **Requests/mo** | 1,000 | 10,000 | 100,000 | Unlimited |
-| **Agents** | 3 | 10 | 50 | Unlimited |
-| **Shield Rules** | 8 | 8 + custom | Unlimited | Unlimited |
-| **Blockchain Proof** | Own wallet | Managed | Managed | Managed |
-| **Trace Retention** | 30 days | 90 days | 365 days | 365 days |
+Palveron is available in Community, Pro, Business and Enterprise tiers. Limits
+and inclusions are defined server-side and shown on the
+[pricing page](https://palveron.com/pricing) and in your dashboard; this client
+behaves identically on every tier.
 
 ---
 

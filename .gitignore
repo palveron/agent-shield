@@ -10,3 +10,12 @@ package-lock.json
 # Spawn-diagnostics output (AGENT_SHIELD_DEBUG_LOG_PATH). Sanitized, but may
 # carry gateway URLs / agent ids — never commit.
 .debug/
+
+# Ad-hoc smoke/test bodies in the repo root (may carry real addresses or live
+# responses), internal findings reports, and packed archives. Working material,
+# never part of the package. Deliberately named, not globbed: a future root
+# JSON (e.g. a tool config) must show up as untracked, not vanish silently.
+/a2_smoke.json
+/body.json
+BEFUND_*.md
+*.zip

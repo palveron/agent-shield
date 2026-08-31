@@ -3,12 +3,11 @@
 // Live end-to-end smoke for agent-shield against a real Palveron Gateway.
 // NOT shipped in the npm package (not listed in package.json "files").
 //
-// SAFETY: `init` (setupShield) WRITES policies + an agent into the project, so
-// this must only ever run against a DEDICATED, DISPOSABLE project — never a
-// production project. There is no test/sandbox key today: every Palveron key is
-// a live `pv_live_` key, so isolation comes from targeting a separate throwaway
-// project, NOT from a key prefix. The guard below makes that conscious by
-// requiring you to name the throwaway project (PALVERON_SMOKE_PROJECT).
+// SAFETY: `init` (setupShield) WRITES policies + an agent into the project the
+// key points at, so this must only ever run against a DEDICATED, DISPOSABLE
+// project created just for the smoke — never a project holding real data. The
+// guard below makes that conscious by requiring you to name the throwaway
+// project (PALVERON_SMOKE_PROJECT).
 //
 // Configuration lives in `.env.smoke` (gitignored; copy from
 // `.env.smoke.example`). Run it with Node's native env-file loader — no extra
@@ -51,10 +50,10 @@ if (!API_KEY) {
   process.exit(2);
 }
 
-// No test/sandbox key exists — every Palveron key is a live key. Isolation
-// comes from running against a DEDICATED, DISPOSABLE project, not from a key
-// prefix. Require the runner to name that project so the choice is conscious:
-// this smoke calls init, which WRITES policies + an agent into it.
+// Require the runner to name the DEDICATED, DISPOSABLE target project so the
+// choice is conscious: this smoke calls init, which WRITES policies + an agent
+// into the project the key points at. Never point it at a project holding
+// real data.
 if (!SMOKE_PROJECT) {
   console.error(
     'Missing PALVERON_SMOKE_PROJECT. Name the dedicated throwaway project this key\n' +

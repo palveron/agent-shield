@@ -85,7 +85,7 @@ If decision has _fallback == true (the gateway was unreachable):
 npm install -g @palveron/agent-shield
 
 # Set environment variables
-export PALVERON_API_KEY="your-api-key"     # From dashboard
+export PALVERON_API_KEY="your-api-key"     # Shown once at signup/rotation (stored hashed)
 export PALVERON_API_URL="your-api-url"     # API endpoint
 
 # Initialize
@@ -98,17 +98,10 @@ npx agent-shield init
 
 ## What's protected
 
-After initialization, the OpenClaw Shield rule set protects your agent (`init`
-reports the exact number activated for your project):
-
-1. **Secret-Exfiltration-Shield** — Blocks API keys, private keys, JWTs in output
-2. **Shell-Injection-Guard** — Blocks curl|bash, chmod 777, eval()
-3. **Destructive-Actions-Shield** — Blocks rm -rf, DROP TABLE, git push --force
-4. **Package-Install-Watchdog** — Requires approval for package installs
-5. **Social-Media-Output-Guard** — Anonymizes PII in outbound messages
-6. **GDPR Privacy Shield** — Anonymizes personal data (emails, phones, IBANs)
-7. **Circuit Breaker** — Stops agent loops (>100 requests/minute)
-8. **Fiscal Authority Limit** — Requires approval for transactions >€1,000
+After initialization, your agent is protected by the rule set your project
+carries. The rules live server-side and can change without an update to this
+file. `init` reports which rules were activated for your project, and the
+dashboard shows the active set at any time.
 
 ## Dashboard
 
