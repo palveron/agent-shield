@@ -1,0 +1,77 @@
+name: Publish to npm
+
+# The ONE release path of @palveron/agent-shield (ENTSCHEIDUNGEN 2026-09-01).
+# Fires ONLY on a published GitHub release — never on push, dispatch, or a
+# schedule: a workflow that could publish on any push is a risk, not a
+# convenience. It carries BOTH publish mechanisms in one file:
+#   • First publish: npm authenticates with the NPM_TOKEN repository secret
+#     (name only — the value lives in GitHub secrets, set by the architect)
+#     and attaches provenance explicitly via the id-token: write permission.
+#   • From the second publish on: the npm trusted-publishing relationship —
+#     configured AFTER the first publish, and pointing at THIS file by name
+#     (.github/workflows/publish.yml; renaming the file silently breaks it) —
+#     is detected by npm >= 11.5.1 via OIDC and preferred over the token.
+# Same file, both eras. No second workflow, no later edit.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Provenance / trusted publishing require Node >= 22.14 and npm >= 11.5.1.
+      # Print both versions and ABORT below the floor — without this gate,
+      # "published without provenance" and "published correctly" would be the
+      # same green line. The publish job pins its own Node; it deliberately
+      # does NOT inherit the test matrix (which still carries Node 18).
+      - name: Assert Node and npm versions
+        run: |
+          node --version
+          npm --version
+          node -e '
+            const [maj, min] = process.versions.node.split(".").map(Number);
+            if (maj < 22 || (maj === 22 && min < 14)) {
+              console.error(`Node ${process.versions.node} is below 22.14 - refusing to publish`);
+              process.exit(1);
+            }
+          '
+          npm_version=$(npm --version)
+          node -e '
+            const [a, b, c] = process.argv[1].split(".").map(Number);
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)));
+            if (!ok) {
+              console.error(`npm ${process.argv[1]} is below 11.5.1 - refusing to publish`);
+              process.exit(1);
+            }
+          ' "$npm_version"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      # --provenance is explicit: on the token path npm would otherwise skip
+      # the attestation silently. Once trusted publishing is active, npm
+      # ignores the token and uses the OIDC relationship instead. No own
+      # already-published check — the trigger is a released version and npm
+      # rejects duplicates itself; a second truth source would only drift.
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
