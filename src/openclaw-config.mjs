@@ -44,10 +44,10 @@ export async function updateOpenClawConfig(config, opts = {}) {
 
       ocConfig.mcpServers['agent-shield'] = {
         command: 'npx',
-        // agent-shield-mcp is a bin INSIDE @palveron/agent-shield, not a
+        // `palveron` is the bin INSIDE @palveron/agent-shield, not a
         // standalone package. `-p` points npx at the right package so the
         // invocation resolves whether or not the package is installed globally.
-        args: ['-y', '-p', '@palveron/agent-shield', 'agent-shield-mcp'],
+        args: ['-y', '-p', '@palveron/agent-shield', 'palveron', 'shield', 'mcp'],
         env: {
           PALVERON_API_URL: config.apiUrl || '',
           PALVERON_API_KEY: config.apiKey || '',

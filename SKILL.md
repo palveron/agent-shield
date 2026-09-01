@@ -89,7 +89,7 @@ export PALVERON_API_KEY="your-api-key"     # Shown once at signup/rotation (stor
 export PALVERON_API_URL="your-api-url"     # API endpoint
 
 # Initialize
-npx agent-shield init
+npx palveron shield init
 ```
 
 > BYOM (Bring Your Own Model): configure your LLM key in the dashboard

@@ -1,14 +1,35 @@
 #!/usr/bin/env node
-// bin/agent-shield.mjs
-// CLI for agent-shield: init, status, test
+// bin/palveron.mjs
+// The ONE entry point of @palveron/agent-shield: `palveron shield <subcommand>`.
+// Replaces the two pre-release entry points (the old CLI bin and the old
+// standalone MCP bin) — merged before first publish, so there is deliberately
+// NO alias and NO compatibility layer for the old names.
+//
 // Usage:
-//   npx agent-shield init     — Setup Shield (activate rules, register agent)
-//   npx agent-shield status   — Show Shield status + 24h stats
-//   npx agent-shield test     — Run a test governance check
-//   npx agent-shield help     — Show usage
+//   npx palveron shield init     — Setup Shield (activate rules, register agent)
+//   npx palveron shield status   — Show Shield status + 24h stats
+//   npx palveron shield test     — Run a test governance check
+//   npx palveron shield mcp      — Start the governance MCP server (stdio)
+//   npx palveron help            — Show usage (same as bare `palveron`)
+//
+// `shield mcp` is what openclaw.json spawns:
+//   "command": "npx",
+//   "args": ["-y", "-p", "@palveron/agent-shield", "palveron", "shield", "mcp"]
+// On that path stdout is the JSON-RPC channel — nothing below may print to
+// stdout before the MCP server owns it (diagnostics go to the dlog file).
 
 import { ShieldClient } from '../src/client.mjs';
 import { updateOpenClawConfig } from '../src/openclaw-config.mjs';
+import { startMcpServer } from '../src/mcp-server.mjs';
+import {
+  dlog,
+  keyMeta,
+  collectProxyEnv,
+  osEnvPresence,
+  tlsEnvSnapshot,
+  dnsServersSafe,
+  netSelftest,
+} from '../src/debug-log.mjs';
 import { hostname } from 'os';
 
 // ─── Config Resolution ──────────────────────────────────────────────
@@ -111,7 +132,7 @@ async function cmdInit() {
     log('');
     log(`  "agent-shield": {`);
     log(`    "command": "npx",`);
-    log(`    "args": ["-y", "-p", "@palveron/agent-shield", "agent-shield-mcp"],`);
+    log(`    "args": ["-y", "-p", "@palveron/agent-shield", "palveron", "shield", "mcp"],`);
     log(`    "env": {`);
     log(`      "PALVERON_API_URL": "${config.apiUrl || 'YOUR_API_URL'}",`);
     log(`      "PALVERON_API_KEY": "${maskKey(config.apiKey)}"`);
@@ -133,7 +154,7 @@ async function cmdInit() {
   log('');
   log(`  ${activeTotal} protection rule${activeTotal === 1 ? '' : 's'} now enforcing for this project.`);
   log('');
-  log('  Run "agent-shield status" to see the active rules and 24h stats.');
+  log('  Run "palveron shield status" to see the active rules and 24h stats.');
   log('');
   log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   log('');
@@ -153,7 +174,7 @@ async function cmdStatus() {
     if (status.shield_active) {
       ok('Shield is ACTIVE');
     } else {
-      warn('Shield is NOT active — run "agent-shield init" to activate');
+      warn('Shield is NOT active — run "palveron shield init" to activate');
     }
 
     log('');
@@ -241,13 +262,14 @@ async function cmdTest() {
 
 function cmdHelp() {
   log('');
-  log('🛡️  Palveron agent-shield — Control Layer for OpenClaw Agents');
+  log('🛡️  Palveron — Control Layer for OpenClaw Agents');
   log('');
   log('Usage:');
-  log('  npx agent-shield init     Set up Shield, activate rules, register agent');
-  log('  npx agent-shield status   Show Shield status + 24h stats');
-  log('  npx agent-shield test     Run test governance checks');
-  log('  npx agent-shield help     Show this help');
+  log('  npx palveron shield init     Set up Shield, activate rules, register agent');
+  log('  npx palveron shield status   Show Shield status + 24h stats');
+  log('  npx palveron shield test     Run test governance checks');
+  log('  npx palveron shield mcp      Start the governance MCP server (stdio)');
+  log('  npx palveron help            Show this help');
   log('');
   log('Environment Variables:');
   log('  PALVERON_API_URL      Governance API URL');
@@ -263,6 +285,62 @@ function cmdHelp() {
   log('');
   log('See: https://docs.palveron.com/en/docs/integrations/openclaw');
   log('');
+}
+
+// ─── MCP server (`palveron shield mcp`) ──────────────────────────────
+// Formerly a standalone MCP bin. stdout belongs to the JSON-RPC transport
+// from here on — diagnostics only via dlog/stderr.
+
+function runMcp() {
+  // proc_start — emitted as early as possible so the log captures exactly what
+  // the SPAWNED process sees (vs. what `openclaw mcp show` claims). Decides H2
+  // (inherited proxy/NODE_OPTIONS), H3 (env divergence), H4 (cwd), plus the
+  // spawn NETWORK context (DNS resolvers, TLS env, undici version, whether
+  // OpenClaw stripped the OS env). Reads the same env aliases the client reads
+  // (mcp-server.mjs: PALVERON_* preferred, AGENT_SHIELD_* fallback).
+  // Secret-safe: key only as presence + length; OS-env values are NEVER logged
+  // (presence only); CA cert as path only.
+  const apiUrl = process.env.PALVERON_API_URL || process.env.AGENT_SHIELD_API_URL || null;
+  const apiKey = process.env.PALVERON_API_KEY || process.env.AGENT_SHIELD_API_KEY || '';
+  const km = keyMeta(apiKey);
+  dlog('proc_start', {
+    cwd: process.cwd(),
+    argv: process.argv,
+    execPath: process.execPath,
+    nodeVersion: process.version,
+    versions: {
+      node: process.versions.node,
+      undici: process.versions.undici ?? null,
+      openssl: process.versions.openssl ?? null,
+    },
+    apiUrl,
+    apiUrlEnvSeen: {
+      PALVERON_API_URL: process.env.PALVERON_API_URL ?? null,
+      AGENT_SHIELD_API_URL: process.env.AGENT_SHIELD_API_URL ?? null,
+    },
+    apiKeyPresent: km.present,
+    apiKeyLen: km.len,
+    agentId: process.env.AGENT_SHIELD_AGENT_ID ?? null, // not a secret
+    proxyEnv: collectProxyEnv(),
+    tlsEnv: tlsEnvSnapshot(),
+    dnsServers: dnsServersSafe(),
+    osEnv: osEnvPresence(),
+    nodeOptions: process.env.NODE_OPTIONS ?? null,
+    failClosedOverride: process.env.AGENT_SHIELD_FAIL_CLOSED ?? null,
+  });
+
+  // Active connectivity self-test — no-op unless diagnostics are enabled. Runs
+  // the RAW fetch outside the SDK so the un-masked undici cause chain is
+  // captured. Fire-and-forget: a pending fetch keeps the event loop alive long
+  // enough for the events to be written even on the short-lived direct-control
+  // run; never throws.
+  netSelftest(apiUrl).catch(() => {});
+
+  startMcpServer().catch((err) => {
+    dlog('proc_fatal', { errName: err?.name, errMessage: String(err?.message ?? err).slice(0, 300) });
+    process.stderr.write(`[palveron shield mcp] Fatal: ${err.message}\n`);
+    process.exit(1);
+  });
 }
 
 // ─── Output Helpers ──────────────────────────────────────────────────
@@ -283,34 +361,47 @@ function maskKey(key) {
 
 // ─── Main ────────────────────────────────────────────────────────────
 
-const command = process.argv[2] || 'help';
+const group = process.argv[2];
+const sub = process.argv[3];
 
-switch (command) {
-  case 'init':
-    cmdInit().catch((err) => {
-      error(err.message);
+if (group === undefined || group === 'help' || group === '--help' || group === '-h') {
+  cmdHelp();
+} else if (group === 'shield') {
+  switch (sub) {
+    case 'mcp':
+      runMcp();
+      break;
+    case 'init':
+      cmdInit().catch((err) => {
+        error(err.message);
+        process.exit(1);
+      });
+      break;
+    case 'status':
+      cmdStatus().catch((err) => {
+        error(err.message);
+        process.exit(1);
+      });
+      break;
+    case 'test':
+      cmdTest().catch((err) => {
+        error(err.message);
+        process.exit(1);
+      });
+      break;
+    case undefined:
+    case 'help':
+    case '--help':
+    case '-h':
+      cmdHelp();
+      break;
+    default:
+      error(`Unknown shield command: ${sub}`);
+      cmdHelp();
       process.exit(1);
-    });
-    break;
-  case 'status':
-    cmdStatus().catch((err) => {
-      error(err.message);
-      process.exit(1);
-    });
-    break;
-  case 'test':
-    cmdTest().catch((err) => {
-      error(err.message);
-      process.exit(1);
-    });
-    break;
-  case 'help':
-  case '--help':
-  case '-h':
-    cmdHelp();
-    break;
-  default:
-    error(`Unknown command: ${command}`);
-    cmdHelp();
-    process.exit(1);
+  }
+} else {
+  error(`Unknown command: ${group}`);
+  cmdHelp();
+  process.exit(1);
 }

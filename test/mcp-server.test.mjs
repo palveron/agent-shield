@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BIN = join(__dirname, '..', 'bin', 'agent-shield-mcp.mjs');
+const BIN = join(__dirname, '..', 'bin', 'palveron.mjs');
 
 /** Mock gateway that records /verify calls and always returns PASSED. */
 function startMockGateway() {
@@ -38,7 +38,7 @@ function startMockGateway() {
 /** Spawn the MCP server, send framed requests, collect framed responses by id. */
 function driveMcp(baseUrl, requests) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BIN], {
+    const child = spawn(process.execPath, [BIN, 'shield', 'mcp'], {
       env: { ...process.env, PALVERON_API_URL: baseUrl, PALVERON_API_KEY: 'pv_live_x' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -56,23 +56,23 @@ export PALVERON_API_KEY="your-key"        # shown ONCE at signup/rotation (store
 export PALVERON_API_URL="your-api-url"    # API endpoint
 
 # 3. Initialize
-npx agent-shield init
+npx palveron shield init
 ```
 
 That's it. Your OpenClaw Shield rule set is now active. Restart your OpenClaw agent.
 
 `init` prints the exact number of rules it activated for your project (it does not
-assume a fixed count). Run `agent-shield status` to see them live.
+assume a fixed count). Run `palveron shield status` to see them live.
 
 ---
 
 ## What It Protects
 
-`agent-shield init` activates the shield rule set for your project automatically,
+`palveron shield init` activates the shield rule set for your project automatically,
 with no configuration needed. The rules live server-side, so they can evolve
 without a client update: `init` reports which rules it activated for your
 project, and the dashboard shows the active set at any time. Run
-`agent-shield status` to see them live.
+`palveron shield status` to see them live.
 
 ---
 
@@ -107,7 +107,7 @@ agent-shield ships an MCP (Model Context Protocol) server exposing a single
 `governance_check` tool that your agent calls before high-risk operations.
 
 `init` wires this into your `openclaw.json` automatically. To configure it manually
-(OpenClaw, Cursor, Claude Code), use this exact invocation — `agent-shield-mcp` is a
+(OpenClaw, Cursor, Claude Code), use this exact invocation — `palveron` is a
 **bin inside `@palveron/agent-shield`**, not a standalone package:
 
 ```json
@@ -115,7 +115,7 @@ agent-shield ships an MCP (Model Context Protocol) server exposing a single
   "mcpServers": {
     "agent-shield": {
       "command": "npx",
-      "args": ["-y", "-p", "@palveron/agent-shield", "agent-shield-mcp"],
+      "args": ["-y", "-p", "@palveron/agent-shield", "palveron", "shield", "mcp"],
       "env": {
         "PALVERON_API_URL": "your-api-url",
         "PALVERON_API_KEY": "your-key"
@@ -163,10 +163,10 @@ gateway is unreachable (maximum safety; availability traded away).
 ## CLI Commands
 
 ```bash
-agent-shield init      # Initialize shield, activate rules, register agent
-agent-shield status    # Show connection status, active rules, 24h stats
-agent-shield test      # Send test prompts through the governance pipeline
-agent-shield --help    # Show all commands
+palveron shield init      # Initialize shield, activate rules, register agent
+palveron shield status    # Show connection status, active rules, 24h stats
+palveron shield test      # Send test prompts through the governance pipeline
+palveron help             # Show all commands
 ```
 
 ---
@@ -182,7 +182,7 @@ each MCP message, every gateway call with its outcome, circuit-breaker
 transitions, and the fail-closed branch):
 
 ```bash
-AGENT_SHIELD_DEBUG_LOG_PATH=./.debug/spawn.jsonl node bin/agent-shield-mcp.mjs
+AGENT_SHIELD_DEBUG_LOG_PATH=./.debug/spawn.jsonl node bin/palveron.mjs shield mcp
 ```
 
 - **Off by default** — unset means zero file IO and no behavioral difference.
@@ -212,7 +212,7 @@ is often not inspected; the spawned child is.
 **Fix — trust the OS certificate store (Node ≥ 22):**
 
 ```bash
-node --use-system-ca bin/agent-shield-mcp.mjs
+node --use-system-ca bin/palveron.mjs shield mcp
 ```
 
 In an MCP host registration, use `command: node` with `--use-system-ca` as the
@@ -221,7 +221,7 @@ first argument before the script path.
 **Node < 22 fallback:** point Node at the inspecting CA explicitly:
 
 ```bash
-NODE_EXTRA_CA_CERTS=/path/to/your-av-or-proxy-root-ca.pem node bin/agent-shield-mcp.mjs
+NODE_EXTRA_CA_CERTS=/path/to/your-av-or-proxy-root-ca.pem node bin/palveron.mjs shield mcp
 ```
 
 > **Never** set `NODE_TLS_REJECT_UNAUTHORIZED=0`. That disables certificate

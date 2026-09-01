@@ -18,7 +18,7 @@ const PROTOCOL_VERSION = '2024-11-05';
 
 /**
  * Start the MCP server on stdin/stdout.
- * Called by bin/agent-shield-mcp.
+ * Called by bin/palveron.mjs (`palveron shield mcp`).
  */
 export async function startMcpServer() {
   const apiUrl = process.env.PALVERON_API_URL || process.env.AGENT_SHIELD_API_URL;

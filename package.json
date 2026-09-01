@@ -18,8 +18,7 @@
     "mcp"
   ],
   "bin": {
-    "agent-shield": "bin/agent-shield.mjs",
-    "agent-shield-mcp": "bin/agent-shield-mcp.mjs"
+    "palveron": "bin/palveron.mjs"
   },
   "main": "./src/index.mjs",
   "type": "module",

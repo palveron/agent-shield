@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { updateOpenClawConfig } from '../src/openclaw-config.mjs';
 
-const EXPECTED_ARGS = ['-y', '-p', '@palveron/agent-shield', 'agent-shield-mcp'];
+const EXPECTED_ARGS = ['-y', '-p', '@palveron/agent-shield', 'palveron', 'shield', 'mcp'];
 
 async function tmpRoot() {
   return mkdtemp(join(tmpdir(), 'agent-shield-test-'));
