@@ -1,6 +1,6 @@
 {
   "name": "@palveron/agent-shield",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Control Layer for OpenClaw Agents — See. Control. Prove.",
   "license": "MIT",
   "repository": {

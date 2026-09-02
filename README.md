@@ -56,10 +56,14 @@ export PALVERON_API_KEY="your-key"        # shown ONCE at signup/rotation (store
 export PALVERON_API_URL="your-api-url"    # API endpoint
 
 # 3. Initialize
-npx palveron shield init
+palveron shield init
 ```
 
 That's it. Your OpenClaw Shield rule set is now active. Restart your OpenClaw agent.
+
+Without a global install (skipping step 1), run step 3 as
+`npx -p @palveron/agent-shield palveron shield init` — the `-p` flag is required:
+`palveron` is the bin *inside* `@palveron/agent-shield`, not an npm package of its own.
 
 `init` prints the exact number of rules it activated for your project (it does not
 assume a fixed count). Run `palveron shield status` to see them live.

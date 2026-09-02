@@ -3,15 +3,12 @@ name: Publish to npm
 # The ONE release path of @palveron/agent-shield (ENTSCHEIDUNGEN 2026-09-01).
 # Fires ONLY on a published GitHub release — never on push, dispatch, or a
 # schedule: a workflow that could publish on any push is a risk, not a
-# convenience. It carries BOTH publish mechanisms in one file:
-#   • First publish: npm authenticates with the NPM_TOKEN repository secret
-#     (name only — the value lives in GitHub secrets, set by the architect)
-#     and attaches provenance explicitly via the id-token: write permission.
-#   • From the second publish on: the npm trusted-publishing relationship —
-#     configured AFTER the first publish, and pointing at THIS file by name
-#     (.github/workflows/publish.yml; renaming the file silently breaks it) —
-#     is detected by npm >= 11.5.1 via OIDC and preferred over the token.
-# Same file, both eras. No second workflow, no later edit.
+# convenience. Authentication is the npm trusted-publishing relationship
+# alone (OIDC via the id-token: write permission, npm >= 11.5.1). That
+# relationship points at THIS file by name (.github/workflows/publish.yml);
+# renaming the file silently breaks it. No token secret is read anywhere in
+# this file — a run without the relationship fails loudly instead of
+# publishing through some other credential.
 
 on:
   release:
@@ -66,12 +63,9 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # --provenance is explicit: on the token path npm would otherwise skip
-      # the attestation silently. Once trusted publishing is active, npm
-      # ignores the token and uses the OIDC relationship instead. No own
+      # --provenance stays explicit: "published" and "published with
+      # attestation" must never be the same green line. No own
       # already-published check — the trigger is a released version and npm
       # rejects duplicates itself; a second truth source would only drift.
       - name: Publish to npm
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

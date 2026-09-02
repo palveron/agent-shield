@@ -6,11 +6,11 @@
 // NO alias and NO compatibility layer for the old names.
 //
 // Usage:
-//   npx palveron shield init     — Setup Shield (activate rules, register agent)
-//   npx palveron shield status   — Show Shield status + 24h stats
-//   npx palveron shield test     — Run a test governance check
-//   npx palveron shield mcp      — Start the governance MCP server (stdio)
-//   npx palveron help            — Show usage (same as bare `palveron`)
+//   palveron shield init     — Setup Shield (activate rules, register agent)
+//   palveron shield status   — Show Shield status + 24h stats
+//   palveron shield test     — Run a test governance check
+//   palveron shield mcp      — Start the governance MCP server (stdio)
+//   palveron help            — Show usage (same as bare `palveron`)
 //
 // `shield mcp` is what openclaw.json spawns:
 //   "command": "npx",
@@ -265,11 +265,11 @@ function cmdHelp() {
   log('🛡️  Palveron — Control Layer for OpenClaw Agents');
   log('');
   log('Usage:');
-  log('  npx palveron shield init     Set up Shield, activate rules, register agent');
-  log('  npx palveron shield status   Show Shield status + 24h stats');
-  log('  npx palveron shield test     Run test governance checks');
-  log('  npx palveron shield mcp      Start the governance MCP server (stdio)');
-  log('  npx palveron help            Show this help');
+  log('  palveron shield init     Set up Shield, activate rules, register agent');
+  log('  palveron shield status   Show Shield status + 24h stats');
+  log('  palveron shield test     Run test governance checks');
+  log('  palveron shield mcp      Start the governance MCP server (stdio)');
+  log('  palveron help            Show this help');
   log('');
   log('Environment Variables:');
   log('  PALVERON_API_URL      Governance API URL');
